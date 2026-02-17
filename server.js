@@ -30,67 +30,22 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                 return null;
             }
 
-            const keywordRaw = event.message.text.trim();
-            const keyword = keywordRaw.toUpperCase();
+            const keyword = event.message.text.trim().toUpperCase();
             let replyText = "";
 
-            // ===== คำที่บ่งบอกว่าเป็นข่าวตลาดหุ้น =====
-            const stockWords = [
-                "หุ้น", "ตลาด", "SET", "กำไร", "ขาดทุน",
-                "งบ", "ไตรมาส", "ราคาปิด", "ปันผล",
-                "นักลงทุน", "ดัชนี"
-            ];
-
-            // ===== คำที่บ่งบอกว่าเป็นข่าวทองคำ =====
-            const goldWords = [
-                "ทอง", "ทองคำ", "ราคาทอง",
-                "บาททองคำ", "ฮั่วเซ่งเฮง"
-            ];
-
-            // ================== ทองคำ ==================
+            // ===== ทองคำ =====
             if (keyword === "GOLD" || keyword === "ทอง") {
 
-                const feeds = [
-                    'https://www.huasengheng.com/feed/',
-                    'https://www.kaohoon.com/feed'
-                ];
+                const feed = await parser.parseURL('https://www.huasengheng.com/feed/');
+                replyText = "🟡 ข่าวทองคำล่าสุด\n\n";
 
-                let allItems = [];
-
-                for (const url of feeds) {
-                    try {
-                        const feed = await parser.parseURL(url);
-                        allItems = allItems.concat(feed.items);
-                    } catch (err) {
-                        console.log("โหลด feed ไม่ได้:", url);
-                    }
-                }
-
-                const filtered = allItems.filter(item => {
-                    const text = (
-                        (item.title || "") +
-                        (item.contentSnippet || "")
-                    );
-
-                    const hasGoldContext = goldWords.some(word =>
-                        text.includes(word)
-                    );
-
-                    return hasGoldContext;
+                feed.items.slice(0, 3).forEach((item, index) => {
+                    replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
                 });
-
-                if (filtered.length === 0) {
-                    replyText = "ไม่พบข่าวทองคำล่าสุด";
-                } else {
-                    replyText = "🟡 ข่าวทองคำล่าสุด\n\n";
-                    filtered.slice(0, 5).forEach((item, index) => {
-                        replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
-                    });
-                }
 
             } else {
 
-                // ================== หุ้นไทย ==================
+                // ===== RSS ไทย =====
                 const feeds = [
                     'https://www.kaohoon.com/feed',
                     'https://www.bangkokbiznews.com/rss',
@@ -109,7 +64,17 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
                 }
 
-                // ===== GNews (เฉพาะภาษาไทย) =====
+                // ===== Yahoo Finance RSS =====
+                try {
+                    const yahooFeed = await parser.parseURL(
+                        `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${keyword}.BK&region=US&lang=en-US`
+                    );
+                    allItems = allItems.concat(yahooFeed.items);
+                } catch (err) {
+                    console.log("Yahoo feed error");
+                }
+
+                // ===== GNews API (ฟรี) =====
                 if (GNEWS_API_KEY) {
                     try {
                         const gnews = await axios.get(
@@ -129,25 +94,17 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
                 }
 
+                // ===== Filter =====
                 const filtered = allItems.filter(item => {
-
                     const text = (
                         (item.title || "") +
                         (item.contentSnippet || "")
-                    );
+                    ).toUpperCase();
 
-                    const upperText = text.toUpperCase();
-
-                    const hasKeyword = upperText.includes(keyword);
-
-                    const hasStockContext = stockWords.some(word =>
-                        text.includes(word)
-                    );
-
-                    return hasKeyword && hasStockContext;
+                    return text.includes(keyword);
                 });
 
-                // ===== ตัดข่าวซ้ำ =====
+                // ===== ตัดข่าวซ้ำ (ตาม link) =====
                 const unique = [];
                 const seen = new Set();
 
@@ -159,9 +116,9 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                 }
 
                 if (unique.length === 0) {
-                    replyText = `ไม่พบข่าวหุ้นของ ${keyword}`;
+                    replyText = `ไม่พบข่าวของ ${keyword}`;
                 } else {
-                    replyText = `📈 ข่าวหุ้นเกี่ยวกับ ${keyword}\n\n`;
+                    replyText = `📈 ข่าวเกี่ยวกับ ${keyword}\n\n`;
 
                     unique.slice(0, 5).forEach((item, index) => {
                         replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
