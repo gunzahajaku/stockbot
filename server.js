@@ -1,13 +1,14 @@
 const express = require("express");
 const axios = require("axios");
+const Parser = require("rss-parser");
 
 const app = express();
 app.use(express.json());
 
-// ใช้ Environment Variable แทนการใส่ตรง ๆ
+const parser = new Parser();
 const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 
-// หน้า root ไว้ให้ Render เช็คว่าแอพรันอยู่
+// หน้า root
 app.get("/", (req, res) => {
     res.send("Stock Bot is running");
 });
@@ -18,13 +19,42 @@ app.post("/webhook", async (req, res) => {
 
         for (let event of events) {
             if (event.type === "message" && event.message.type === "text") {
-                const userText = event.message.text.toUpperCase();
 
-                const rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${userText}&region=US&lang=en-US`;
+                const userText = event.message.text.toUpperCase().trim();
+                let rssUrl = "";
+                let title = "";
 
-                await axios.get(rssUrl); // แค่เช็คว่าดึงได้
+                // ===== ทองคำ =====
+                if (userText === "GOLD" || userText === "ทอง") {
+                    rssUrl = "https://www.kitco.com/rss/news";
+                    title = "ข่าวทองคำล่าสุด";
+                }
 
-                const replyText = `ข่าวล่าสุดของ ${userText}\n(ดูรายละเอียดใน Yahoo Finance)`;
+                // ===== หุ้นไทย =====
+                else if (/^[A-Z]{2,5}$/.test(userText)) {
+                    rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${userText}.BK&region=US&lang=en-US`;
+                    title = `ข่าวหุ้นไทย ${userText}`;
+                }
+
+                // ===== หุ้นต่างประเทศ =====
+                else {
+                    rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${userText}&region=US&lang=en-US`;
+                    title = `ข่าวหุ้น ${userText}`;
+                }
+
+                const feed = await parser.parseURL(rssUrl);
+
+                let replyText = `ไม่พบข่าวของ ${userText}`;
+
+                if (feed.items && feed.items.length > 0) {
+                    replyText = `${title}\n\n`;
+
+                    const newsList = feed.items.slice(0, 3);
+
+                    newsList.forEach((item, index) => {
+                        replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
+                    });
+                }
 
                 await axios.post(
                     "https://api.line.me/v2/bot/message/reply",
@@ -43,8 +73,9 @@ app.post("/webhook", async (req, res) => {
         }
 
         res.sendStatus(200);
+
     } catch (error) {
-        console.error(error.response?.data || error.message);
+        console.error(error.message);
         res.sendStatus(500);
     }
 });
