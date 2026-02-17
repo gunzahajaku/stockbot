@@ -285,9 +285,10 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                     const symbol = `${keyword}.BK`;
 
-                    // ราคาหุ้น
+                    // ราคาหุ้น - เพิ่ม timeout
                     const priceRes = await axios.get(
-                        `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`
+                        `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`,
+                        { timeout: 8000 } // timeout 8 วินาที
                     );
 
                     // ตรวจสอบว่ามีผลลัพธ์หรือไม่
@@ -498,10 +499,56 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
 
                 } catch (err) {
-                    console.error('Error fetching stock data:', err);
+                    console.error('Error fetching stock data:', err.message);
+                    console.error('Error code:', err.code);
+                    console.error('Error status:', err.response?.status);
+
+                    // ถ้า error เป็น rate limit, timeout หรือ network error ลอง FinFeedAPI
+                    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.response?.status === 429 || err.code === 'ENOTFOUND') {
+                        console.log(`Yahoo Finance error (${err.code || err.response?.status}), ลอง FinFeedAPI...`);
+
+                        try {
+                            const finFeedData = await getStockFromFinFeed(keyword);
+
+                            if (finFeedData) {
+                                const currentPrice = finFeedData.price || finFeedData.last || 0;
+                                const priceChange = finFeedData.change || 0;
+                                const changePercent = finFeedData.changePercent || finFeedData.percentChange || 0;
+                                const changeSymbol = priceChange >= 0 ? '📈' : '📉';
+                                const changeColor = priceChange >= 0 ? '🟢' : '🔴';
+
+                                let fallbackText = `${changeSymbol} หุ้น ${keyword} ${changeColor}\n`;
+                                fallbackText += `━━━━━━━━━━━━━━━━━━\n`;
+                                fallbackText += `💰 ราคา: ${currentPrice.toFixed(2)} บาท\n`;
+                                fallbackText += `📊 เปลี่ยนแปลง: ${priceChange.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
+
+                                if (finFeedData.volume) {
+                                    fallbackText += `📦 ปริมาณซื้อขาย: ${finFeedData.volume.toLocaleString()}\n`;
+                                }
+
+                                fallbackText += `━━━━━━━━━━━━━━━━━━\n\n`;
+                                fallbackText += `ℹ️ ข้อมูลจาก FinFeedAPI\n`;
+                                fallbackText += `(Yahoo Finance ไม่พร้อมใช้งานชั่วคราว)`;
+
+                                return client.replyMessage(event.replyToken, {
+                                    type: 'text',
+                                    text: fallbackText
+                                });
+                            }
+                        } catch (finErr) {
+                            console.log('FinFeedAPI ก็ error:', finErr.message);
+                        }
+                    }
+
+                    // ถ้าทุกอย่าง error หมด
                     return client.replyMessage(event.replyToken, {
                         type: 'text',
-                        text: `❌ เกิดข้อผิดพลาดในการดึงข้อมูลหุ้น ${keyword}\n\nกรุณาลองใหม่อีกครั้ง`
+                        text: `❌ ขออภัย ไม่สามารถดึงข้อมูลหุ้น ${keyword} ได้ในขณะนี้\n\n` +
+                            `📌 เหตุผลที่เป็นไปได้:\n` +
+                            `• Yahoo Finance มีปัญหาชั่วคราว\n` +
+                            `• เรียกข้อมูลบ่อยเกินไป (rate limit)\n` +
+                            `• ปัญหาการเชื่อมต่อ\n\n` +
+                            `💡 กรุณารอสักครู่แล้วลองใหม่อีกครั้ง`
                     });
                 }
             }
