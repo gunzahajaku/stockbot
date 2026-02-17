@@ -15,6 +15,8 @@ const config = {
 };
 
 const GNEWS_API_KEY = process.env.GNEWS_API_KEY;
+const ALPHA_VANTAGE_API_KEY = process.env.Alpha_Vantage_API;
+const Twelve_Data_API = process.env.Twelve_Data_API;
 
 const client = new line.Client(config);
 
@@ -40,28 +42,25 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                 let priceText = "";
 
-                // ราคาทอง
+                // ราคาทอง (XAU/USD) จาก Alpha Vantage
                 try {
                     const priceRes = await axios.get(
-                        'https://query1.finance.yahoo.com/v7/finance/quote?symbols=GC=F',
-                        { timeout: 5000 }
+                        `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=XAU&to_currency=USD&apikey=${ALPHA_VANTAGE_API_KEY}`,
+                        { timeout: 8000 }
                     );
-                    const quote = priceRes.data.quoteResponse.result[0];
 
-                    const changeSymbol = quote.regularMarketChange >= 0 ? '📈' : '📉';
-                    const changeColor = quote.regularMarketChange >= 0 ? '🟢' : '🔴';
+                    if (priceRes.data && priceRes.data['Realtime Currency Exchange Rate']) {
+                        const data = priceRes.data['Realtime Currency Exchange Rate'];
+                        const currentPrice = parseFloat(data['5. Exchange Rate']);
+                        const lastRefresh = data['6. Last Refreshed'];
 
-                    priceText =
-                        `${changeSymbol} ราคาทองคำ (GOLD) ${changeColor}\n` +
-                        `━━━━━━━━━━━━━━━━━━\n` +
-                        `💰 ราคาปัจจุบัน: $${quote.regularMarketPrice.toFixed(2)}\n` +
-                        `📊 เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} (${quote.regularMarketChangePercent.toFixed(2)}%)\n`;
-
-                    if (quote.regularMarketDayHigh && quote.regularMarketDayLow) {
-                        priceText += `📌 สูง-ต่ำ: $${quote.regularMarketDayHigh.toFixed(2)} - $${quote.regularMarketDayLow.toFixed(2)}\n`;
+                        priceText =
+                            `📈 ราคาทองคำ (GOLD) 🟡\n` +
+                            `━━━━━━━━━━━━━━━━━━\n` +
+                            `💰 ราคาปัจจุบัน: $${currentPrice.toFixed(2)} USD/oz\n` +
+                            `� อัพเดท: ${lastRefresh}\n` +
+                            `━━━━━━━━━━━━━━━━━━\n\n`;
                     }
-
-                    priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
 
                 } catch (err) {
                     console.log('ไม่สามารถดึงราคาทอง:', err.message);
@@ -71,7 +70,7 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                 // ข่าวทอง
                 try {
                     const feed = await parser.parseURL('https://www.huasengheng.com/feed/');
-                    replyText = priceText + "� ข่าวทองคำล่าสุด\n\n";
+                    replyText = priceText + "📰 ข่าวทองคำล่าสุด\n\n";
 
                     feed.items.slice(0, 3).forEach((item, index) => {
                         replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
@@ -157,45 +156,57 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                 if (/^[A-Z]{2,6}$/.test(keyword)) {
                     try {
-                        const symbol = `${keyword}.BK`;
+                        // Twelve Data API สำหรับหุ้นไทย
                         const priceRes = await axios.get(
-                            `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`,
-                            { timeout: 5000 }
+                            `https://api.twelvedata.com/quote`,
+                            {
+                                params: {
+                                    symbol: keyword,
+                                    exchange: 'SET',  // Stock Exchange of Thailand
+                                    apikey: Twelve_Data_API
+                                },
+                                timeout: 8000
+                            }
                         );
 
-                        if (priceRes.data.quoteResponse.result && priceRes.data.quoteResponse.result.length > 0) {
-                            const quote = priceRes.data.quoteResponse.result[0];
+                        if (priceRes.data && priceRes.data.close) {
+                            const data = priceRes.data;
+                            const currentPrice = parseFloat(data.close);
+                            const change = parseFloat(data.change || 0);
+                            const changePercent = parseFloat(data.percent_change || 0);
 
-                            if (quote && quote.regularMarketPrice) {
-                                const changeSymbol = quote.regularMarketChange >= 0 ? '📈' : '📉';
-                                const changeColor = quote.regularMarketChange >= 0 ? '🟢' : '🔴';
+                            const changeSymbol = change >= 0 ? '📈' : '📉';
+                            const changeColor = change >= 0 ? '🟢' : '🔴';
 
-                                priceText =
-                                    `${changeSymbol} หุ้น ${keyword} ${changeColor}\n` +
-                                    `━━━━━━━━━━━━━━━━━━\n` +
-                                    `💰 ราคาปัจจุบัน: ${quote.regularMarketPrice.toFixed(2)} บาท\n` +
-                                    `📊 เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} (${quote.regularMarketChangePercent.toFixed(2)}%)\n`;
+                            priceText =
+                                `${changeSymbol} หุ้น ${keyword} ${changeColor}\n` +
+                                `━━━━━━━━━━━━━━━━━━\n` +
+                                `💰 ราคาปัจจุบัน: ${currentPrice.toFixed(2)} บาท\n` +
+                                `📊 เปลี่ยนแปลง: ${change.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
 
-                                if (quote.regularMarketVolume) {
-                                    priceText += `📦 ปริมาณ: ${quote.regularMarketVolume.toLocaleString()}\n`;
-                                }
-                                if (quote.regularMarketDayHigh && quote.regularMarketDayLow) {
-                                    priceText += `📌 สูง-ต่ำ: ${quote.regularMarketDayHigh.toFixed(2)} - ${quote.regularMarketDayLow.toFixed(2)}\n`;
-                                }
-
-                                priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
+                            if (data.high && data.low) {
+                                priceText += `📌 สูง-ต่ำ: ${parseFloat(data.high).toFixed(2)} - ${parseFloat(data.low).toFixed(2)}\n`;
                             }
+                            if (data.volume) {
+                                priceText += `📦 ปริมาณ: ${parseInt(data.volume).toLocaleString()}\n`;
+                            }
+
+                            priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
                         }
                     } catch (err) {
                         console.log('ไม่สามารถดึงราคาหุ้น:', err.message);
+                        if (err.response?.data) {
+                            console.log('Twelve Data error:', err.response.data);
+                        }
                     }
                 }
+
 
                 // ===== แสดงผล =====
                 if (unique.length === 0) {
                     replyText = priceText + `ไม่พบข่าวของ ${keyword}`;
                 } else {
-                    replyText = priceText + `� ข่าวเกี่ยวกับ ${keyword}\n\n`;
+                    replyText = priceText + ` ข่าวเกี่ยวกับ ${keyword}\n\n`;
 
                     unique.slice(0, 5).forEach((item, index) => {
                         replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
