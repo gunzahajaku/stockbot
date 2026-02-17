@@ -42,28 +42,46 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                 let priceText = "";
 
-                // ราคาทอง (XAU/USD) จาก Alpha Vantage
+                // ราคาทอง (XAU/USD) จาก Twelve Data
                 try {
                     const priceRes = await axios.get(
-                        `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=XAU&to_currency=USD&apikey=${ALPHA_VANTAGE_API_KEY}`,
-                        { timeout: 8000 }
+                        `https://api.twelvedata.com/quote`,
+                        {
+                            params: {
+                                symbol: 'XAU/USD',
+                                apikey: Twelve_Data_API
+                            },
+                            timeout: 8000
+                        }
                     );
 
-                    if (priceRes.data && priceRes.data['Realtime Currency Exchange Rate']) {
-                        const data = priceRes.data['Realtime Currency Exchange Rate'];
-                        const currentPrice = parseFloat(data['5. Exchange Rate']);
-                        const lastRefresh = data['6. Last Refreshed'];
+                    if (priceRes.data && priceRes.data.close) {
+                        const data = priceRes.data;
+                        const currentPrice = parseFloat(data.close);
+                        const change = parseFloat(data.change || 0);
+                        const changePercent = parseFloat(data.percent_change || 0);
+
+                        const changeSymbol = change >= 0 ? '📈' : '📉';
+                        const changeColor = change >= 0 ? '🟢' : '🔴';
 
                         priceText =
-                            `📈 ราคาทองคำ (GOLD) 🟡\n` +
+                            `${changeSymbol} ราคาทองคำ (GOLD) ${changeColor}\n` +
                             `━━━━━━━━━━━━━━━━━━\n` +
                             `💰 ราคาปัจจุบัน: $${currentPrice.toFixed(2)} USD/oz\n` +
-                            `� อัพเดท: ${lastRefresh}\n` +
-                            `━━━━━━━━━━━━━━━━━━\n\n`;
+                            `📊 เปลี่ยนแปลง: $${change.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
+
+                        if (data.high && data.low) {
+                            priceText += `📌 สูง-ต่ำ: $${parseFloat(data.high).toFixed(2)} - $${parseFloat(data.low).toFixed(2)}\n`;
+                        }
+
+                        priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
                     }
 
                 } catch (err) {
                     console.log('ไม่สามารถดึงราคาทอง:', err.message);
+                    if (err.response?.data) {
+                        console.log('Twelve Data error:', err.response.data);
+                    }
                     priceText = "❌ ไม่สามารถดึงราคาทองได้\n\n";
                 }
 
