@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const line = require('@line/bot-sdk');
 const Parser = require('rss-parser');
@@ -36,12 +38,47 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
             // ===== ทองคำ =====
             if (keyword === "GOLD" || keyword === "ทอง") {
 
-                const feed = await parser.parseURL('https://www.huasengheng.com/feed/');
-                replyText = "🟡 ข่าวทองคำล่าสุด\n\n";
+                let priceText = "";
 
-                feed.items.slice(0, 3).forEach((item, index) => {
-                    replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
-                });
+                // ราคาทอง
+                try {
+                    const priceRes = await axios.get(
+                        'https://query1.finance.yahoo.com/v7/finance/quote?symbols=GC=F',
+                        { timeout: 5000 }
+                    );
+                    const quote = priceRes.data.quoteResponse.result[0];
+
+                    const changeSymbol = quote.regularMarketChange >= 0 ? '📈' : '📉';
+                    const changeColor = quote.regularMarketChange >= 0 ? '🟢' : '🔴';
+
+                    priceText =
+                        `${changeSymbol} ราคาทองคำ (GOLD) ${changeColor}\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `💰 ราคาปัจจุบัน: $${quote.regularMarketPrice.toFixed(2)}\n` +
+                        `📊 เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} (${quote.regularMarketChangePercent.toFixed(2)}%)\n`;
+
+                    if (quote.regularMarketDayHigh && quote.regularMarketDayLow) {
+                        priceText += `📌 สูง-ต่ำ: $${quote.regularMarketDayHigh.toFixed(2)} - $${quote.regularMarketDayLow.toFixed(2)}\n`;
+                    }
+
+                    priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
+
+                } catch (err) {
+                    console.log('ไม่สามารถดึงราคาทอง:', err.message);
+                    priceText = "❌ ไม่สามารถดึงราคาทองได้\n\n";
+                }
+
+                // ข่าวทอง
+                try {
+                    const feed = await parser.parseURL('https://www.huasengheng.com/feed/');
+                    replyText = priceText + "� ข่าวทองคำล่าสุด\n\n";
+
+                    feed.items.slice(0, 3).forEach((item, index) => {
+                        replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
+                    });
+                } catch (err) {
+                    replyText = priceText + "📰 ไม่สามารถดึงข่าวทองได้";
+                }
 
             } else {
 
@@ -115,13 +152,53 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
                 }
 
+                // ===== ราคาหุ้นไทย =====
+                let priceText = "";
+
+                if (/^[A-Z]{2,6}$/.test(keyword)) {
+                    try {
+                        const symbol = `${keyword}.BK`;
+                        const priceRes = await axios.get(
+                            `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`,
+                            { timeout: 5000 }
+                        );
+
+                        if (priceRes.data.quoteResponse.result && priceRes.data.quoteResponse.result.length > 0) {
+                            const quote = priceRes.data.quoteResponse.result[0];
+
+                            if (quote && quote.regularMarketPrice) {
+                                const changeSymbol = quote.regularMarketChange >= 0 ? '📈' : '📉';
+                                const changeColor = quote.regularMarketChange >= 0 ? '🟢' : '🔴';
+
+                                priceText =
+                                    `${changeSymbol} หุ้น ${keyword} ${changeColor}\n` +
+                                    `━━━━━━━━━━━━━━━━━━\n` +
+                                    `💰 ราคาปัจจุบัน: ${quote.regularMarketPrice.toFixed(2)} บาท\n` +
+                                    `📊 เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} (${quote.regularMarketChangePercent.toFixed(2)}%)\n`;
+
+                                if (quote.regularMarketVolume) {
+                                    priceText += `📦 ปริมาณ: ${quote.regularMarketVolume.toLocaleString()}\n`;
+                                }
+                                if (quote.regularMarketDayHigh && quote.regularMarketDayLow) {
+                                    priceText += `📌 สูง-ต่ำ: ${quote.regularMarketDayHigh.toFixed(2)} - ${quote.regularMarketDayLow.toFixed(2)}\n`;
+                                }
+
+                                priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
+                            }
+                        }
+                    } catch (err) {
+                        console.log('ไม่สามารถดึงราคาหุ้น:', err.message);
+                    }
+                }
+
+                // ===== แสดงผล =====
                 if (unique.length === 0) {
-                    replyText = `ไม่พบข่าวของ ${keyword}`;
+                    replyText = priceText + `ไม่พบข่าวของ ${keyword}`;
                 } else {
-                    replyText = `📈 ข่าวเกี่ยวกับ ${keyword}\n\n`;
+                    replyText = priceText + `� ข่าวเกี่ยวกับ ${keyword}\n\n`;
 
                     unique.slice(0, 5).forEach((item, index) => {
-                        replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
+                        replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
                     });
                 }
             }
