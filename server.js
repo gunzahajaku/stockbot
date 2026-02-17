@@ -14,12 +14,27 @@ const config = {
 
 const client = new line.Client(config);
 
+// ===== คำที่มีผลกระทบทอง =====
+const goldImpactKeywords = [
+    "GOLD",
+    "ทอง",
+    "FED",
+    "ดอกเบี้ย",
+    "INFLATION",
+    "เงินเฟ้อ",
+    "DOLLAR",
+    "BOND",
+    "YIELD",
+    "เศรษฐกิจสหรัฐ"
+];
+
 app.get('/', (req, res) => {
-    res.send('Thai Stock Yahoo Bot running');
+    res.send('Gold & Thai Stock Bot running');
 });
 
 app.post('/webhook', line.middleware(config), async (req, res) => {
     try {
+
         const events = req.body.events;
 
         await Promise.all(events.map(async (event) => {
@@ -31,23 +46,75 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
             const keyword = event.message.text.trim().toUpperCase();
             let replyText = "";
 
-            // รับเฉพาะรหัสหุ้น 2-6 ตัวอักษร
-            if (!/^[A-Z]{2,6}$/.test(keyword)) {
-                replyText = "กรุณาพิมพ์รหัสหุ้นไทย เช่น PTT, AOT, AS";
-            } else {
+            // =========================
+            // ===== ทองคำ =====
+            // =========================
+            if (keyword === "GOLD" || keyword === "ทอง") {
+
+                let allItems = [];
+
+                try {
+                    // ฮั่วเซ่งเฮง (ข่าวทองไทย)
+                    const thaiGold = await parser.parseURL('https://www.huasengheng.com/feed/');
+                    allItems = allItems.concat(thaiGold.items);
+                } catch (err) {
+                    console.log("Thai gold feed error");
+                }
+
+                try {
+                    // Yahoo Finance ทองคำโลก
+                    const yahooGold = await parser.parseURL(
+                        'https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC=F&region=US&lang=en-US'
+                    );
+                    allItems = allItems.concat(yahooGold.items);
+                } catch (err) {
+                    console.log("Yahoo gold error");
+                }
+
+                // ===== กรองข่าวที่มีผลกระทบ =====
+                const filtered = allItems.filter(item => {
+                    const text = `${item.title || ""}${item.contentSnippet || ""}`.toUpperCase();
+                    return goldImpactKeywords.some(word => text.includes(word));
+                });
+
+                // ลบข่าวซ้ำ
+                const unique = [];
+                const seen = new Set();
+
+                for (const item of filtered) {
+                    if (!seen.has(item.link)) {
+                        seen.add(item.link);
+                        unique.push(item);
+                    }
+                }
+
+                if (unique.length === 0) {
+                    replyText = "ไม่พบข่าวทองคำที่มีผลกระทบต่อราคาในขณะนี้";
+                } else {
+                    replyText = "🟡 ข่าวทองคำที่อาจมีผลต่อราคาขึ้น/ลง\n\n";
+
+                    unique.slice(0, 5).forEach((item, index) => {
+                        replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
+                    });
+                }
+            }
+
+            // =========================
+            // ===== หุ้นไทย (Yahoo) =====
+            // =========================
+            else if (/^[A-Z]{2,6}$/.test(keyword)) {
 
                 try {
 
-                    // ดึงเฉพาะหุ้นไทย (.BK)
                     const yahooFeed = await parser.parseURL(
                         `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${keyword}.BK&region=US&lang=en-US`
                     );
 
                     if (!yahooFeed.items || yahooFeed.items.length === 0) {
-                        replyText = `ไม่พบข่าวของหุ้น ${keyword} ใน Yahoo Finance`;
+                        replyText = `ไม่พบข่าวของหุ้น ${keyword}`;
                     } else {
 
-                        replyText = `📈 ข่าวของหุ้น ${keyword} (Yahoo Finance)\n\n`;
+                        replyText = `📈 ข่าวของหุ้น ${keyword}\n\n`;
 
                         yahooFeed.items.slice(0, 5).forEach((item, index) => {
                             replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
@@ -55,11 +122,15 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
 
                 } catch (err) {
-                    console.log("Yahoo error:", err.message);
                     replyText = `เกิดข้อผิดพลาดในการดึงข่าว ${keyword}`;
                 }
             }
 
+            else {
+                replyText = "พิมพ์รหัสหุ้นไทย เช่น PTT หรือพิมพ์ GOLD สำหรับข่าวทองคำ";
+            }
+
+            // กันข้อความยาวเกิน
             if (replyText.length > 1900) {
                 replyText = replyText.substring(0, 1900) + "\n\n(ข้อความถูกตัดเนื่องจากยาวเกินไป)";
             }
