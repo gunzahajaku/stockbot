@@ -15,6 +15,80 @@ const config = {
 
 const client = new line.Client(config);
 
+// FinFeedAPI Configuration
+const FINFEED_API_KEY = process.env.FINFEED_API_KEY;
+
+// ฟังก์ชันดึงข้อมูลหุ้นจาก FinFeedAPI
+async function getStockFromFinFeed(symbol) {
+    if (!FINFEED_API_KEY) {
+        console.log('FinFeedAPI key not configured');
+        return null;
+    }
+
+    try {
+        // FinFeedAPI ใช้สัญลักษณ์ SET เช่น PTT แทน PTT.BK
+        const response = await axios.get(
+            `https://api.finfeedapi.com/v1/stock/${symbol}`,
+            {
+                headers: {
+                    'X-API-KEY': FINFEED_API_KEY
+                }
+            }
+        );
+
+        if (response.data && response.data.data) {
+            return response.data.data;
+        }
+        return null;
+    } catch (err) {
+        console.log(`FinFeedAPI error for ${symbol}:`, err.message);
+        return null;
+    }
+}
+
+// ===== RSS Feeds สำหรับข่าวหุ้นไทย =====
+const thaiStockNewsFeeds = [
+    'http://feeds2.feedburner.com/settrade/researchStock?format=xml',  // ข่าวหุ้นรายตัว
+    'http://feeds2.feedburner.com/settrade/researchMarket?format=xml'  // ข่าวตลาด
+];
+
+// ฟังก์ชันดึงข่าวหุ้นไทยจาก RSS feeds
+async function getThaiStockNews(symbol = null) {
+    let allNews = [];
+
+    for (const feedUrl of thaiStockNewsFeeds) {
+        try {
+            const feed = await parser.parseURL(feedUrl);
+
+            if (symbol) {
+                // กรองข่าวที่เกี่ยวข้องกับหุ้นนั้นๆ
+                const filtered = feed.items.filter(item => {
+                    const text = `${item.title || ""}${item.contentSnippet || ""}`.toUpperCase();
+                    return text.includes(symbol.toUpperCase());
+                });
+                allNews = allNews.concat(filtered);
+            } else {
+                // ดึงข่าวทั้งหมด
+                allNews = allNews.concat(feed.items);
+            }
+        } catch (err) {
+            console.log(`ไม่สามารถดึงข่าวจาก ${feedUrl}:`, err.message);
+        }
+    }
+
+    // ตัดข่าวซ้ำ
+    const unique = [];
+    const seen = new Set();
+    for (const item of allNews) {
+        if (!seen.has(item.link)) {
+            seen.add(item.link);
+            unique.push(item);
+        }
+    }
+
+    return unique;
+}
+
 // ===== คำที่มีผลกระทบต่อทอง =====
 const goldImpactKeywords = [
     "GOLD",
@@ -218,9 +292,78 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                     // ตรวจสอบว่ามีผลลัพธ์หรือไม่
                     if (!priceRes.data.quoteResponse.result || priceRes.data.quoteResponse.result.length === 0) {
+
+                        // Yahoo Finance ไม่เจอ ลอง FinFeedAPI
+                        console.log(`Yahoo Finance ไม่พบ ${keyword}, กำลังลอง FinFeedAPI...`);
+                        const finFeedData = await getStockFromFinFeed(keyword);
+
+                        if (!finFeedData) {
+                            // ทั้ง 2 API หาไม่เจอ
+                            return client.replyMessage(event.replyToken, {
+                                type: 'text',
+                                text: `❌ ไม่พบข้อมูลหุ้น ${keyword}\n\n` +
+                                    `ลองค้นหาแล้วใน Yahoo Finance และ FinFeedAPI แต่ไม่พบข้อมูล\n` +
+                                    `กรุณาตรวจสอบรหัสหุ้นอีกครั้ง`
+                            });
+                        }
+
+                        // พบข้อมูลจาก FinFeedAPI แล้ว
+                        console.log(`พบข้อมูล ${keyword} จาก FinFeedAPI`);
+
+                        // สร้างข้อความแสดงราคาจาก FinFeedAPI
+                        const currentPrice = finFeedData.price || finFeedData.last || 0;
+                        const priceChange = finFeedData.change || 0;
+                        const changePercent = finFeedData.changePercent || (finFeedData.percentChange) || 0;
+
+                        const changeSymbol = priceChange >= 0 ? '📈' : '📉';
+                        const changeColor = priceChange >= 0 ? '🟢' : '🔴';
+
+                        replyText =
+                            `${changeSymbol} หุ้น ${keyword} ${changeColor}\n` +
+                            `━━━━━━━━━━━━━━━━━━\n` +
+                            `💰 ราคาปัจจุบัน: ${currentPrice.toFixed(2)} บาท\n` +
+                            `📊 เปลี่ยนแปลง: ${priceChange.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
+
+                        // เพิ่มข้อมูลเพิ่มเติมถ้ามีจาก FinFeedAPI
+                        if (finFeedData.volume) {
+                            replyText += `📦 ปริมาณซื้อขาย: ${finFeedData.volume.toLocaleString()}\n`;
+                        }
+                        if (finFeedData.high && finFeedData.low) {
+                            replyText += `📌 สูงสุด-ต่ำสุดวันนี้: ${finFeedData.high.toFixed(2)} - ${finFeedData.low.toFixed(2)}\n`;
+                        }
+
+                        replyText += `━━━━━━━━━━━━━━━━━━\n\n`;
+
+                        // ดึงข่าวหุ้นไทย
+                        const thaiNews = await getThaiStockNews(keyword);
+
+                        if (thaiNews.length > 0) {
+                            replyText += `📰 ข่าวที่เกี่ยวข้อง:\n\n`;
+                            thaiNews.slice(0, 3).forEach((item, index) => {
+                                replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
+                            });
+                        } else {
+                            // ถ้าไม่มีข่าวเฉพาะหุ้นนั้น ดึงข่าวตลาดทั่วไป
+                            const generalNews = await getThaiStockNews();
+                            if (generalNews.length > 0) {
+                                replyText += `📰 ข่าวตลาดล่าสุด:\n\n`;
+                                generalNews.slice(0, 2).forEach((item, index) => {
+                                    replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
+                                });
+                            }
+                        }
+
+                        replyText += `\nℹ️ ข้อมูลราคาจาก FinFeedAPI | ข่าวจาก Settrade`;
+
+                        // จำกัดความยาวข้อความ
+                        if (replyText.length > 1900) {
+                            replyText = replyText.substring(0, 1900) + '...';
+                        }
+
+                        // ส่งข้อความ (FinFeedAPI ยังไม่มีกราฟ)
                         return client.replyMessage(event.replyToken, {
                             type: 'text',
-                            text: `❌ ไม่พบข้อมูลหุ้น ${keyword} ในตลาดหลักทรัพย์ไทย\n\nกรุณาตรวจสอบรหัสหุ้นอีกครั้ง หรือลองใช้รหัสหุ้นอื่น`
+                            text: replyText
                         });
                     }
 
