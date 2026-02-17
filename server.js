@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const line = require('@line/bot-sdk');
 const Parser = require('rss-parser');
@@ -33,8 +35,15 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
             const keyword = event.message.text.trim().toUpperCase();
             let replyText = "";
 
+            // ===== ตรวจสอบรูปแบบคำ =====
+            const isStockCode = /^[A-Z]{2,5}$/.test(keyword);
+
+            if (!isStockCode && keyword !== "GOLD" && keyword !== "ทอง") {
+                replyText = "กรุณาพิมพ์ชื่อหุ้นไทย เช่น PTT, AOT หรือพิมพ์ GOLD สำหรับทองคำ";
+            }
+
             // ===== ทองคำ =====
-            if (keyword === "GOLD" || keyword === "ทอง") {
+            else if (keyword === "GOLD" || keyword === "ทอง") {
 
                 const feed = await parser.parseURL('https://www.huasengheng.com/feed/');
                 replyText = "🟡 ข่าวทองคำล่าสุด\n\n";
@@ -45,7 +54,6 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
             } else {
 
-                // ===== RSS ไทย =====
                 const feeds = [
                     'https://www.kaohoon.com/feed',
                     'https://www.bangkokbiznews.com/rss',
@@ -64,7 +72,7 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
                 }
 
-                // ===== Yahoo Finance RSS =====
+                // ===== Yahoo Finance =====
                 try {
                     const yahooFeed = await parser.parseURL(
                         `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${keyword}.BK&region=US&lang=en-US`
@@ -74,7 +82,7 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     console.log("Yahoo feed error");
                 }
 
-                // ===== GNews API (ฟรี) =====
+                // ===== GNews (ถ้ามี API KEY) =====
                 if (GNEWS_API_KEY) {
                     try {
                         const gnews = await axios.get(
@@ -104,7 +112,7 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     return text.includes(keyword);
                 });
 
-                // ===== ตัดข่าวซ้ำ (ตาม link) =====
+                // ===== ลบข่าวซ้ำ =====
                 const unique = [];
                 const seen = new Set();
 
@@ -124,6 +132,11 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                         replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
                     });
                 }
+            }
+
+            // ===== กันข้อความยาวเกิน LINE limit =====
+            if (replyText.length > 1900) {
+                replyText = replyText.substring(0, 1900) + "\n\n(ข้อความถูกตัดเนื่องจากยาวเกินไป)";
             }
 
             return client.replyMessage(event.replyToken, {
