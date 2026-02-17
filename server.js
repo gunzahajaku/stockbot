@@ -16,7 +16,7 @@ const config = {
 const client = new line.Client(config);
 
 // FinFeedAPI Configuration
-const FINFEED_API_KEY = process.env.FINFEED_API_KEY;
+const FINFEED_API_KEY = process.env.FinFeed_API || process.env.FINFEED_API_KEY;
 
 // ฟังก์ชันดึงข้อมูลหุ้นจาก FinFeedAPI
 async function getStockFromFinFeed(symbol) {
@@ -285,10 +285,10 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                     const symbol = `${keyword}.BK`;
 
-                    // ราคาหุ้น - เพิ่ม timeout
+                    // ราคาหุ้น - ลด timeout ให้เร็วขึ้น
                     const priceRes = await axios.get(
                         `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`,
-                        { timeout: 8000 } // timeout 8 วินาที
+                        { timeout: 5000 } // timeout 5 วินาที
                     );
 
                     // ตรวจสอบว่ามีผลลัพธ์หรือไม่
