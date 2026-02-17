@@ -15,7 +15,7 @@ const config = {
 
 const client = new line.Client(config);
 
-// ===== คำที่มีผลต่อราคาทอง =====
+// ===== คำที่มีผลกระทบต่อทอง =====
 const goldImpactKeywords = [
     "GOLD",
     "ทอง",
@@ -52,26 +52,29 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                 let allItems = [];
 
+                // ข่าวทองไทย
                 try {
                     const thaiGold = await parser.parseURL('https://www.huasengheng.com/feed/');
                     allItems = allItems.concat(thaiGold.items);
-                } catch { }
+                } catch (err) { }
 
+                // ข่าวทองโลก
                 try {
                     const yahooGold = await parser.parseURL(
                         'https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC=F&region=US&lang=en-US'
                     );
                     allItems = allItems.concat(yahooGold.items);
-                } catch { }
+                } catch (err) { }
 
+                // กรองข่าวที่มีผลกระทบ
                 const filtered = allItems.filter(item => {
                     const text = `${item.title || ""}${item.contentSnippet || ""}`.toUpperCase();
                     return goldImpactKeywords.some(word => text.includes(word));
                 });
 
+                // ตัดข่าวซ้ำ
                 const unique = [];
                 const seen = new Set();
-
                 for (const item of filtered) {
                     if (!seen.has(item.link)) {
                         seen.add(item.link);
@@ -79,34 +82,59 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     }
                 }
 
-                replyText = "🟡 ข่าวทองคำที่อาจมีผลต่อราคา\n\n";
+                // ราคาทอง + กราฟ
+                let priceText = "";
+                let chartUrl = null;
 
-                unique.slice(0, 5).forEach((item, index) => {
-                    replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
-                });
+                try {
+                    const priceRes = await axios.get(
+                        'https://query1.finance.yahoo.com/v7/finance/quote?symbols=GC=F'
+                    );
+                    const quote = priceRes.data.quoteResponse.result[0];
 
-                // ===== กราฟราคาทอง =====
-                const chartRes = await axios.get(
-                    'https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=7d&interval=1d'
-                );
+                    priceText =
+                        `🟡 GOLD\n` +
+                        `ราคา: ${quote.regularMarketPrice} USD\n` +
+                        `เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} (${quote.regularMarketChangePercent.toFixed(2)}%)\n\n`;
 
-                const prices = chartRes.data.chart.result[0].indicators.quote[0].close;
+                    const chartRes = await axios.get(
+                        'https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=7d&interval=1d'
+                    );
 
-                const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify({
-                    type: 'line',
-                    data: {
-                        labels: prices.map((_, i) => `Day ${i + 1}`),
-                        datasets: [{
-                            label: 'Gold Price',
-                            data: prices
-                        }]
-                    }
-                }))}`;
+                    const prices = chartRes.data.chart.result[0].indicators.quote[0].close;
 
-                return client.replyMessage(event.replyToken, [
-                    { type: 'text', text: replyText.substring(0, 1900) },
-                    { type: 'image', originalContentUrl: chartUrl, previewImageUrl: chartUrl }
-                ]);
+                    chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify({
+                        type: 'line',
+                        data: {
+                            labels: prices.map((_, i) => `Day ${i + 1}`),
+                            datasets: [{
+                                label: 'Gold',
+                                data: prices
+                            }]
+                        }
+                    }))}`;
+
+                } catch (err) { }
+
+                if (unique.length === 0) {
+                    replyText = priceText + "ไม่พบข่าวทองคำที่มีผลกระทบในขณะนี้";
+                } else {
+                    replyText = priceText + "📰 ข่าวที่อาจกระทบราคาทอง\n\n";
+                    unique.slice(0, 5).forEach((item, index) => {
+                        replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
+                    });
+                }
+
+                if (replyText.length > 1900) replyText = replyText.substring(0, 1900);
+
+                if (chartUrl) {
+                    return client.replyMessage(event.replyToken, [
+                        { type: 'text', text: replyText },
+                        { type: 'image', originalContentUrl: chartUrl, previewImageUrl: chartUrl }
+                    ]);
+                }
+
+                return client.replyMessage(event.replyToken, { type: 'text', text: replyText });
             }
 
             // =========================
@@ -114,77 +142,91 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
             // =========================
             else if (/^[A-Z]{2,6}$/.test(keyword)) {
 
-                const symbol = `${keyword}.BK`;
+                try {
 
-                // ===== ราคา =====
-                const priceRes = await axios.get(
-                    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`
-                );
+                    const symbol = `${keyword}.BK`;
 
-                const quote = priceRes.data.quoteResponse.result[0];
+                    // ราคา
+                    const priceRes = await axios.get(
+                        `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`
+                    );
+                    const quote = priceRes.data.quoteResponse.result[0];
 
-                if (!quote) {
+                    if (!quote) {
+                        return client.replyMessage(event.replyToken, {
+                            type: 'text',
+                            text: `ไม่พบข้อมูลหุ้น ${keyword}`
+                        });
+                    }
+
+                    replyText =
+                        `📈 ${keyword}\n` +
+                        `ราคา: ${quote.regularMarketPrice} บาท\n` +
+                        `เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} (${quote.regularMarketChangePercent.toFixed(2)}%)\n\n`;
+
+                    // ข่าวหุ้น
+                    try {
+                        const yahooFeed = await parser.parseURL(
+                            `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${symbol}&region=US&lang=en-US`
+                        );
+
+                        replyText += "📰 ข่าวล่าสุด\n\n";
+                        yahooFeed.items.slice(0, 3).forEach((item, index) => {
+                            replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
+                        });
+                    } catch (err) {
+                        replyText += "ไม่สามารถดึงข่าวได้\n\n";
+                    }
+
+                    // กราฟ
+                    const chartRes = await axios.get(
+                        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=7d&interval=1d`
+                    );
+
+                    const prices = chartRes.data.chart.result[0].indicators.quote[0].close;
+
+                    const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify({
+                        type: 'line',
+                        data: {
+                            labels: prices.map((_, i) => `Day ${i + 1}`),
+                            datasets: [{
+                                label: keyword,
+                                data: prices
+                            }]
+                        }
+                    }))}`;
+
+                    if (replyText.length > 1900) replyText = replyText.substring(0, 1900);
+
+                    return client.replyMessage(event.replyToken, [
+                        { type: 'text', text: replyText },
+                        { type: 'image', originalContentUrl: chartUrl, previewImageUrl: chartUrl }
+                    ]);
+
+                } catch (err) {
                     return client.replyMessage(event.replyToken, {
                         type: 'text',
-                        text: `ไม่พบข้อมูลหุ้น ${keyword}`
+                        text: `เกิดข้อผิดพลาดในการดึงข้อมูล ${keyword}`
                     });
                 }
-
-                replyText =
-                    `📈 ${keyword}\n` +
-                    `ราคา: ${quote.regularMarketPrice} บาท\n` +
-                    `เปลี่ยนแปลง: ${quote.regularMarketChange.toFixed(2)} ` +
-                    `(${quote.regularMarketChangePercent.toFixed(2)}%)\n\n`;
-
-                // ===== ข่าวหุ้น =====
-                const yahooFeed = await parser.parseURL(
-                    `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${symbol}&region=US&lang=en-US`
-                );
-
-                replyText += "📰 ข่าวล่าสุด\n\n";
-
-                yahooFeed.items.slice(0, 3).forEach((item, index) => {
-                    replyText += `${index + 1}. ${item.title}\n${item.link}\n\n`;
-                });
-
-                // ===== กราฟหุ้น =====
-                const chartRes = await axios.get(
-                    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=7d&interval=1d`
-                );
-
-                const prices = chartRes.data.chart.result[0].indicators.quote[0].close;
-
-                const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify({
-                    type: 'line',
-                    data: {
-                        labels: prices.map((_, i) => `Day ${i + 1}`),
-                        datasets: [{
-                            label: keyword,
-                            data: prices
-                        }]
-                    }
-                }))}`;
-
-                return client.replyMessage(event.replyToken, [
-                    { type: 'text', text: replyText.substring(0, 1900) },
-                    { type: 'image', originalContentUrl: chartUrl, previewImageUrl: chartUrl }
-                ]);
             }
 
             // =========================
-            // ===== fallback =====
+            // ===== อื่น ๆ =====
             // =========================
-            return client.replyMessage(event.replyToken, {
-                type: 'text',
-                text: 'พิมพ์รหัสหุ้นไทย เช่น PTT หรือพิมพ์ GOLD สำหรับข่าวทองคำ'
-            });
+            else {
+                return client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: "พิมพ์รหัสหุ้นไทย เช่น PTT หรือพิมพ์ GOLD สำหรับทองคำ"
+                });
+            }
 
         }));
 
         res.sendStatus(200);
 
-    } catch (err) {
-        console.error(err);
+    } catch (error) {
+        console.error(error);
         res.sendStatus(500);
     }
 });
