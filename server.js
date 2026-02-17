@@ -15,36 +15,6 @@ const config = {
 
 const client = new line.Client(config);
 
-// FinFeedAPI Configuration
-const FINFEED_API_KEY = process.env.FinFeed_API || process.env.FINFEED_API_KEY;
-
-// ฟังก์ชันดึงข้อมูลหุ้นจาก FinFeedAPI
-async function getStockFromFinFeed(symbol) {
-    if (!FINFEED_API_KEY) {
-        console.log('FinFeedAPI key not configured');
-        return null;
-    }
-
-    try {
-        // FinFeedAPI ใช้สัญลักษณ์ SET เช่น PTT แทน PTT.BK
-        const response = await axios.get(
-            `https://api.finfeedapi.com/v1/stock/${symbol}`,
-            {
-                headers: {
-                    'X-API-KEY': FINFEED_API_KEY
-                }
-            }
-        );
-
-        if (response.data && response.data.data) {
-            return response.data.data;
-        }
-        return null;
-    } catch (err) {
-        console.log(`FinFeedAPI error for ${symbol}:`, err.message);
-        return null;
-    }
-}
 
 // ===== RSS Feeds สำหรับข่าวหุ้นไทย =====
 const thaiStockNewsFeeds = [
@@ -293,78 +263,11 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 
                     // ตรวจสอบว่ามีผลลัพธ์หรือไม่
                     if (!priceRes.data.quoteResponse.result || priceRes.data.quoteResponse.result.length === 0) {
-
-                        // Yahoo Finance ไม่เจอ ลอง FinFeedAPI
-                        console.log(`Yahoo Finance ไม่พบ ${keyword}, กำลังลอง FinFeedAPI...`);
-                        const finFeedData = await getStockFromFinFeed(keyword);
-
-                        if (!finFeedData) {
-                            // ทั้ง 2 API หาไม่เจอ
-                            return client.replyMessage(event.replyToken, {
-                                type: 'text',
-                                text: `❌ ไม่พบข้อมูลหุ้น ${keyword}\n\n` +
-                                    `ลองค้นหาแล้วใน Yahoo Finance และ FinFeedAPI แต่ไม่พบข้อมูล\n` +
-                                    `กรุณาตรวจสอบรหัสหุ้นอีกครั้ง`
-                            });
-                        }
-
-                        // พบข้อมูลจาก FinFeedAPI แล้ว
-                        console.log(`พบข้อมูล ${keyword} จาก FinFeedAPI`);
-
-                        // สร้างข้อความแสดงราคาจาก FinFeedAPI
-                        const currentPrice = finFeedData.price || finFeedData.last || 0;
-                        const priceChange = finFeedData.change || 0;
-                        const changePercent = finFeedData.changePercent || (finFeedData.percentChange) || 0;
-
-                        const changeSymbol = priceChange >= 0 ? '📈' : '📉';
-                        const changeColor = priceChange >= 0 ? '🟢' : '🔴';
-
-                        replyText =
-                            `${changeSymbol} หุ้น ${keyword} ${changeColor}\n` +
-                            `━━━━━━━━━━━━━━━━━━\n` +
-                            `💰 ราคาปัจจุบัน: ${currentPrice.toFixed(2)} บาท\n` +
-                            `📊 เปลี่ยนแปลง: ${priceChange.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
-
-                        // เพิ่มข้อมูลเพิ่มเติมถ้ามีจาก FinFeedAPI
-                        if (finFeedData.volume) {
-                            replyText += `📦 ปริมาณซื้อขาย: ${finFeedData.volume.toLocaleString()}\n`;
-                        }
-                        if (finFeedData.high && finFeedData.low) {
-                            replyText += `📌 สูงสุด-ต่ำสุดวันนี้: ${finFeedData.high.toFixed(2)} - ${finFeedData.low.toFixed(2)}\n`;
-                        }
-
-                        replyText += `━━━━━━━━━━━━━━━━━━\n\n`;
-
-                        // ดึงข่าวหุ้นไทย
-                        const thaiNews = await getThaiStockNews(keyword);
-
-                        if (thaiNews.length > 0) {
-                            replyText += `📰 ข่าวที่เกี่ยวข้อง:\n\n`;
-                            thaiNews.slice(0, 3).forEach((item, index) => {
-                                replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
-                            });
-                        } else {
-                            // ถ้าไม่มีข่าวเฉพาะหุ้นนั้น ดึงข่าวตลาดทั่วไป
-                            const generalNews = await getThaiStockNews();
-                            if (generalNews.length > 0) {
-                                replyText += `📰 ข่าวตลาดล่าสุด:\n\n`;
-                                generalNews.slice(0, 2).forEach((item, index) => {
-                                    replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
-                                });
-                            }
-                        }
-
-                        replyText += `\nℹ️ ข้อมูลราคาจาก FinFeedAPI | ข่าวจาก Settrade`;
-
-                        // จำกัดความยาวข้อความ
-                        if (replyText.length > 1900) {
-                            replyText = replyText.substring(0, 1900) + '...';
-                        }
-
-                        // ส่งข้อความ (FinFeedAPI ยังไม่มีกราฟ)
                         return client.replyMessage(event.replyToken, {
                             type: 'text',
-                            text: replyText
+                            text: `❌ ไม่พบข้อมูลหุ้น ${keyword}\n\n` +
+                                `กรุณาตรวจสอบรหัสหุ้นอีกครั้ง หรือลองใช้รหัสหุ้นอื่น\n\n` +
+                                `� ตัวอย่างรหัสหุ้นที่ถูกต้อง: PTT, KBANK, AOT`
                         });
                     }
 
@@ -502,43 +405,6 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
                     console.error('Error fetching stock data:', err.message);
                     console.error('Error code:', err.code);
                     console.error('Error status:', err.response?.status);
-
-                    // ถ้า error เป็น rate limit, timeout หรือ network error ลอง FinFeedAPI
-                    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.response?.status === 429 || err.code === 'ENOTFOUND') {
-                        console.log(`Yahoo Finance error (${err.code || err.response?.status}), ลอง FinFeedAPI...`);
-
-                        try {
-                            const finFeedData = await getStockFromFinFeed(keyword);
-
-                            if (finFeedData) {
-                                const currentPrice = finFeedData.price || finFeedData.last || 0;
-                                const priceChange = finFeedData.change || 0;
-                                const changePercent = finFeedData.changePercent || finFeedData.percentChange || 0;
-                                const changeSymbol = priceChange >= 0 ? '📈' : '📉';
-                                const changeColor = priceChange >= 0 ? '🟢' : '🔴';
-
-                                let fallbackText = `${changeSymbol} หุ้น ${keyword} ${changeColor}\n`;
-                                fallbackText += `━━━━━━━━━━━━━━━━━━\n`;
-                                fallbackText += `💰 ราคา: ${currentPrice.toFixed(2)} บาท\n`;
-                                fallbackText += `📊 เปลี่ยนแปลง: ${priceChange.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
-
-                                if (finFeedData.volume) {
-                                    fallbackText += `📦 ปริมาณซื้อขาย: ${finFeedData.volume.toLocaleString()}\n`;
-                                }
-
-                                fallbackText += `━━━━━━━━━━━━━━━━━━\n\n`;
-                                fallbackText += `ℹ️ ข้อมูลจาก FinFeedAPI\n`;
-                                fallbackText += `(Yahoo Finance ไม่พร้อมใช้งานชั่วคราว)`;
-
-                                return client.replyMessage(event.replyToken, {
-                                    type: 'text',
-                                    text: fallbackText
-                                });
-                            }
-                        } catch (finErr) {
-                            console.log('FinFeedAPI ก็ error:', finErr.message);
-                        }
-                    }
 
                     // ถ้าทุกอย่าง error หมด
                     return client.replyMessage(event.replyToken, {
