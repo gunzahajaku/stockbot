@@ -557,9 +557,17 @@ async function fetchFinancialData(symbol) {
         capEx: fmtNum(stmt.capitalExpenditures)
     })) : null;
 
-    console.log(`[YAHOO] Financial data OK for ${symbol}: dividend=${!!dividend.rate}, IS=${!!incomeStatement}, BS=${!!balanceSheet}, CF=${!!cashFlow}`);
+    console.log(`[YAHOO] Financial data OK for ${symbol}: dividend=${!!dividend.rate}, IS=${!!incomeStatement}, BS=${!!balanceSheet}, CF=${!!cashFlow}, PE=${sd.trailingPE?.raw || ks.trailingPE?.raw || 'N/A'}`);
 
-    return { dividend, incomeStatement, balanceSheet, cashFlow };
+    return {
+        dividend, incomeStatement, balanceSheet, cashFlow,
+        _summaryDetail: { trailingPE: sd.trailingPE?.raw || null },
+        _keyStats: {
+            trailingPE: ks.trailingPE?.raw || null,
+            forwardPE: ks.forwardPE?.raw || null,
+            trailingEps: ks.trailingEps?.raw || null
+        }
+    };
 }
 
 module.exports = {

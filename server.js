@@ -213,6 +213,24 @@ async function handleStockMessage(event, keyword) {
         };
     }
 
+    // เพิ่ม PE/EPS จาก Yahoo Finance ถ้ายังไม่มี
+    if (stockData.pe === null || stockData.eps === null) {
+        try {
+            const fin = await fetchFinancialData(keyword);
+            const sd = fin._summaryDetail || {};
+            const ks = fin._keyStats || {};
+            if (stockData.pe === null && (ks.trailingPE || sd.trailingPE)) {
+                stockData.pe = (ks.trailingPE || sd.trailingPE);
+            }
+            if (stockData.eps === null && ks.trailingEps) {
+                stockData.eps = ks.trailingEps;
+            }
+            console.log(`[STOCK] PE/EPS enriched: PE=${stockData.pe}, EPS=${stockData.eps}`);
+        } catch (err) {
+            console.log(`[STOCK] PE/EPS enrichment failed: ${err.message}`);
+        }
+    }
+
     const chartUrl = prices ? await generatePriceChartUrl(keyword, prices, stockData.name) : null;
 
     // ลองส่ง Flex Message
