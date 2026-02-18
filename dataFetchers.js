@@ -9,6 +9,46 @@ const parser = new Parser();
 const Twelve_Data_API = process.env.Twelve_Data_API;
 const GNEWS_API_KEY = process.env.GNEWS_API_KEY;
 
+// ===== In-Memory Cache =====
+const cache = new Map();
+let cacheHits = 0;
+let cacheMisses = 0;
+
+/**
+ * ดึงข้อมูลจาก cache ถ้ามี ถ้าไม่มีหรือหมดอายุเรียก fetchFn แล้วเก็บใหม่
+ * @param {string} key - cache key
+ * @param {number} ttlMs - อายุ cache เป็น ms
+ * @param {Function} fetchFn - async function ที่จะเรียกถ้า cache miss
+ */
+async function cachedFetch(key, ttlMs, fetchFn) {
+    const cached = cache.get(key);
+    if (cached && Date.now() - cached.time < ttlMs) {
+        cacheHits++;
+        console.log(`[CACHE] HIT: ${key} (age: ${Math.round((Date.now() - cached.time) / 1000)}s)`);
+        return cached.data;
+    }
+    cacheMisses++;
+    console.log(`[CACHE] MISS: ${key}`);
+    const data = await fetchFn();
+    cache.set(key, { data, time: Date.now() });
+    return data;
+}
+
+function getCacheStats() {
+    return { size: cache.size, hits: cacheHits, misses: cacheMisses };
+}
+
+// ล้าง cache ที่หมดอายุทุก 10 นาที
+setInterval(() => {
+    const now = Date.now();
+    const maxAge = 15 * 60 * 1000; // 15 นาที
+    for (const [key, val] of cache) {
+        if (now - val.time > maxAge) {
+            cache.delete(key);
+        }
+    }
+}, 10 * 60 * 1000);
+
 // ===== Stock Quote (SET) =====
 async function fetchStockQuote(symbol) {
     const res = await axios.get('https://api.twelvedata.com/quote', {
@@ -446,17 +486,29 @@ async function fetchTimeSeriesYahoo(symbol, days = 30) {
 // ===== Yahoo Finance Crumb Auth =====
 let yahooCrumb = null;
 let yahooCookie = null;
+let crumbTime = 0;
+const CRUMB_MAX_AGE = 25 * 60 * 1000; // crumb หมดอายุ 25 นาที (refresh ก่อน Yahoo timeout)
 
-async function getYahooCrumb() {
-    if (yahooCrumb && yahooCookie) return { crumb: yahooCrumb, cookie: yahooCookie };
+function resetYahooCrumb() {
+    yahooCrumb = null;
+    yahooCookie = null;
+    crumbTime = 0;
+    console.log('[YAHOO] Crumb reset');
+}
 
-    console.log('[YAHOO] Getting crumb...');
+async function getYahooCrumb(forceRefresh = false) {
+    // ถ้า crumb อายุเกิน 25 นาที ดึงใหม่
+    if (!forceRefresh && yahooCrumb && yahooCookie && (Date.now() - crumbTime < CRUMB_MAX_AGE)) {
+        return { crumb: yahooCrumb, cookie: yahooCookie };
+    }
+
+    console.log(`[YAHOO] Getting crumb... (${forceRefresh ? 'forced' : 'expired/first'})`);
     // Step 1: Get cookie
     const cookieRes = await axios.get('https://fc.yahoo.com/', {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
         timeout: 5000,
         maxRedirects: 5,
-        validateStatus: () => true // accept any status
+        validateStatus: () => true
     });
 
     const setCookies = cookieRes.headers['set-cookie'];
@@ -474,14 +526,15 @@ async function getYahooCrumb() {
     });
 
     yahooCrumb = crumbRes.data;
+    crumbTime = Date.now();
     console.log('[YAHOO] Crumb obtained OK');
     return { crumb: yahooCrumb, cookie: yahooCookie };
 }
 
 // ===== Yahoo Finance - Financial Data (งบการเงิน/เงินปันผล) =====
-async function fetchFinancialData(symbol) {
+async function fetchFinancialData(symbol, _retry = false) {
     const yahooSymbol = `${symbol}.BK`;
-    console.log(`[YAHOO] Fetching financial data for ${yahooSymbol}`);
+    console.log(`[YAHOO] Fetching financial data for ${yahooSymbol}${_retry ? ' (retry)' : ''}`);
 
     const { crumb, cookie } = await getYahooCrumb();
 
@@ -493,14 +546,25 @@ async function fetchFinancialData(symbol) {
         'cashflowStatementHistory'
     ].join(',');
 
-    const res = await axios.get(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${yahooSymbol}`, {
-        params: { modules, crumb },
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Cookie': cookie || ''
-        },
-        timeout: 10000
-    });
+    let res;
+    try {
+        res = await axios.get(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${yahooSymbol}`, {
+            params: { modules, crumb },
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Cookie': cookie || ''
+            },
+            timeout: 10000
+        });
+    } catch (err) {
+        // ถ้า 401 (crumb หมดอายุ) → reset แล้วลองใหม่อีก 1 ครั้ง
+        if ((err.response?.status === 401 || err.response?.status === 403) && !_retry) {
+            console.log(`[YAHOO] Got ${err.response.status}, resetting crumb and retrying...`);
+            resetYahooCrumb();
+            return fetchFinancialData(symbol, true);
+        }
+        throw err;
+    }
 
     const result = res.data?.quoteSummary?.result?.[0];
     if (!result) throw new Error(`No financial data for ${yahooSymbol}`);
@@ -573,15 +637,45 @@ async function fetchFinancialData(symbol) {
     };
 }
 
+// ===== Cache TTL settings =====
+const CACHE_TTL = {
+    QUOTE: 5 * 60 * 1000,       // ราคาหุ้น: 5 นาที
+    GOLD: 3 * 60 * 1000,        // ราคาทอง: 3 นาที
+    TIME_SERIES: 10 * 60 * 1000, // กราฟ: 10 นาที
+    TECHNICAL: 10 * 60 * 1000,   // ตัวชี้วัด: 10 นาที
+    FINANCIAL: 30 * 60 * 1000,   // งบการเงิน: 30 นาที
+    NEWS: 10 * 60 * 1000         // ข่าว: 10 นาที
+};
+
 module.exports = {
-    fetchStockQuote,
-    fetchStockQuoteNoExchange,
-    fetchStockQuoteYahoo,
-    fetchGoldQuote,
-    fetchTimeSeries,
-    fetchTimeSeriesYahoo,
-    calculateSupportResistance,
-    fetchTechnicalIndicators,
-    fetchFinancialData,
-    fetchNews
+    fetchStockQuote: (symbol) =>
+        cachedFetch(`quote:SET:${symbol}`, CACHE_TTL.QUOTE, () => fetchStockQuote(symbol)),
+
+    fetchStockQuoteNoExchange: (symbol) =>
+        cachedFetch(`quote:ANY:${symbol}`, CACHE_TTL.QUOTE, () => fetchStockQuoteNoExchange(symbol)),
+
+    fetchStockQuoteYahoo: (symbol) =>
+        cachedFetch(`quote:YAHOO:${symbol}`, CACHE_TTL.QUOTE, () => fetchStockQuoteYahoo(symbol)),
+
+    fetchGoldQuote: () =>
+        cachedFetch('quote:GOLD', CACHE_TTL.GOLD, () => fetchGoldQuote()),
+
+    fetchTimeSeries: (symbol, options) =>
+        cachedFetch(`ts:${symbol}:${JSON.stringify(options)}`, CACHE_TTL.TIME_SERIES, () => fetchTimeSeries(symbol, options)),
+
+    fetchTimeSeriesYahoo: (symbol, days) =>
+        cachedFetch(`ts:YAHOO:${symbol}:${days}`, CACHE_TTL.TIME_SERIES, () => fetchTimeSeriesYahoo(symbol, days)),
+
+    calculateSupportResistance, // ไม่ต้อง cache (คำนวณจาก data ที่มี)
+
+    fetchTechnicalIndicators: (symbol, exchange) =>
+        cachedFetch(`tech:${symbol}:${exchange}`, CACHE_TTL.TECHNICAL, () => fetchTechnicalIndicators(symbol, exchange)),
+
+    fetchFinancialData: (symbol) =>
+        cachedFetch(`fin:${symbol}`, CACHE_TTL.FINANCIAL, () => fetchFinancialData(symbol)),
+
+    fetchNews: (keyword, type) =>
+        cachedFetch(`news:${keyword}:${type}`, CACHE_TTL.NEWS, () => fetchNews(keyword, type)),
+
+    getCacheStats
 };
