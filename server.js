@@ -168,23 +168,23 @@ async function handleStockMessage(event, keyword) {
         console.log(`[STOCK] Twelve Data SET failed: ${err.message}`);
     }
 
-    // ลอง 2: Twelve Data โดยไม่ระบุ exchange
+    // ลอง 2: Yahoo Finance (.BK) สำหรับหุ้นไทย (ลองก่อน Twelve Data ทั่วไป)
+    if (!stockData) {
+        try {
+            stockData = await fetchStockQuoteYahoo(keyword);
+            console.log(`[STOCK] Yahoo Finance OK: ${keyword}, price: ${stockData.price}`);
+        } catch (err) {
+            console.log(`[STOCK] Yahoo Finance (.BK) failed: ${err.message}`);
+        }
+    }
+
+    // ลอง 3: Twelve Data โดยไม่ระบุ exchange (สำหรับหุ้นต่างประเทศ)
     if (!stockData) {
         try {
             stockData = await fetchStockQuoteNoExchange(keyword);
             console.log(`[STOCK] Twelve Data (no exchange) OK: ${keyword}`);
         } catch (err) {
             console.log(`[STOCK] Twelve Data (no exchange) failed: ${err.message}`);
-        }
-    }
-
-    // ลอง 3: Yahoo Finance (.BK) สำหรับหุ้นไทย
-    if (!stockData) {
-        try {
-            stockData = await fetchStockQuoteYahoo(keyword);
-            console.log(`[STOCK] Yahoo Finance OK: ${keyword}, price: ${stockData.price}`);
-        } catch (err) {
-            console.log(`[STOCK] Yahoo Finance failed: ${err.message}`);
         }
     }
 
