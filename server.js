@@ -120,8 +120,8 @@ async function handleGoldMessage(event) {
         };
     }
 
-    const chartUrl = prices ? generatePriceChartUrl('XAU/USD', prices, 'Gold') : null;
-    console.log('[GOLD] Chart URL:', chartUrl ? 'generated' : 'null');
+    const chartUrl = prices ? await generatePriceChartUrl('XAU/USD', prices, 'Gold') : null;
+    console.log('[GOLD] Chart URL:', chartUrl ? chartUrl : 'null');
 
     // ลอง Flex Message ก่อน
     try {
@@ -199,7 +199,7 @@ async function handleStockMessage(event, keyword) {
         };
     }
 
-    const chartUrl = prices ? generatePriceChartUrl(keyword, prices, stockData.name) : null;
+    const chartUrl = prices ? await generatePriceChartUrl(keyword, prices, stockData.name) : null;
 
     // ลองส่ง Flex Message
     try {
@@ -290,7 +290,7 @@ async function handleSupportResistance(event, symbol, type) {
     const prices = await fetchTimeSeries(isGold ? 'XAU/USD' : symbol, options);
     const srData = calculateSupportResistance(prices);
     const currentPrice = prices[prices.length - 1]?.close;
-    const chartUrl = generateSRChartUrl(symbol, prices, srData.supports, srData.resistances);
+    const chartUrl = await generateSRChartUrl(symbol, prices, srData.supports, srData.resistances);
     return client.replyMessage(event.replyToken, buildSupportResistance(symbol, srData, chartUrl, currentPrice));
 }
 
