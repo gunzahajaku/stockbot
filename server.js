@@ -2,11 +2,11 @@ require('dotenv').config();
 
 const express = require('express');
 const line = require('@line/bot-sdk');
-const Parser = require('rss-parser');
-const axios = require('axios');
+const { fetchStockQuote, fetchGoldQuote, fetchTimeSeries, calculateSupportResistance, fetchTechnicalIndicators, fetchNews } = require('./dataFetchers');
+const { generatePriceChartUrl, generateSRChartUrl } = require('./chartGenerator');
+const { buildStockCard, buildDetailMenu, buildSupportResistance, buildTechnicalIndicators, buildNewsMessage, buildComingSoon, buildOverview } = require('./flexBuilders');
 
 const app = express();
-const parser = new Parser();
 
 // ===== ENV =====
 const config = {
@@ -14,240 +14,191 @@ const config = {
     channelSecret: process.env.CHANNEL_SECRET
 };
 
-const GNEWS_API_KEY = process.env.GNEWS_API_KEY;
-const ALPHA_VANTAGE_API_KEY = process.env.Alpha_Vantage_API;
-const Twelve_Data_API = process.env.Twelve_Data_API;
-
 const client = new line.Client(config);
 
 app.get('/', (req, res) => {
-    res.send('Stock Bot is running');
+    res.send('Stock Bot is running 🚀');
 });
 
 app.post('/webhook', line.middleware(config), async (req, res) => {
     try {
         const events = req.body.events;
-
-        await Promise.all(events.map(async (event) => {
-
-            if (event.type !== 'message' || event.message.type !== 'text') {
-                return null;
-            }
-
-            const keyword = event.message.text.trim().toUpperCase();
-            let replyText = "";
-
-            // ===== ทองคำ =====
-            if (keyword === "GOLD" || keyword === "ทอง") {
-
-                let priceText = "";
-
-                // ราคาทอง (XAU/USD) จาก Twelve Data
-                try {
-                    const priceRes = await axios.get(
-                        `https://api.twelvedata.com/quote`,
-                        {
-                            params: {
-                                symbol: 'XAU/USD',
-                                apikey: Twelve_Data_API
-                            },
-                            timeout: 8000
-                        }
-                    );
-
-                    if (priceRes.data && priceRes.data.close) {
-                        const data = priceRes.data;
-                        const currentPrice = parseFloat(data.close);
-                        const change = parseFloat(data.change || 0);
-                        const changePercent = parseFloat(data.percent_change || 0);
-
-                        const changeSymbol = change >= 0 ? '📈' : '📉';
-                        const changeColor = change >= 0 ? '🟢' : '🔴';
-
-                        priceText =
-                            `${changeSymbol} ราคาทองคำ (GOLD) ${changeColor}\n` +
-                            `━━━━━━━━━━━━━━━━━━\n` +
-                            `💰 ราคาปัจจุบัน: $${currentPrice.toFixed(2)} USD/oz\n` +
-                            `📊 เปลี่ยนแปลง: $${change.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
-
-                        if (data.high && data.low) {
-                            priceText += `📌 สูง-ต่ำ: $${parseFloat(data.high).toFixed(2)} - $${parseFloat(data.low).toFixed(2)}\n`;
-                        }
-
-                        priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
-                    }
-
-                } catch (err) {
-                    console.log('ไม่สามารถดึงราคาทอง:', err.message);
-                    if (err.response?.data) {
-                        console.log('Twelve Data error:', err.response.data);
-                    }
-                    priceText = "❌ ไม่สามารถดึงราคาทองได้\n\n";
-                }
-
-                // ข่าวทอง
-                try {
-                    const feed = await parser.parseURL('https://www.huasengheng.com/feed/');
-                    replyText = priceText + "📰 ข่าวทองคำล่าสุด\n\n";
-
-                    feed.items.slice(0, 3).forEach((item, index) => {
-                        replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
-                    });
-                } catch (err) {
-                    replyText = priceText + "📰 ไม่สามารถดึงข่าวทองได้";
-                }
-
-            } else {
-
-                // ===== RSS ไทย =====
-                const feeds = [
-                    'https://www.kaohoon.com/feed',
-                    'https://www.bangkokbiznews.com/rss',
-                    'https://www.thansettakij.com/rss',
-                    'https://www.prachachat.net/feed'
-                ];
-
-                let allItems = [];
-
-                for (const url of feeds) {
-                    try {
-                        const feed = await parser.parseURL(url);
-                        allItems = allItems.concat(feed.items);
-                    } catch (err) {
-                        console.log("โหลด feed ไม่ได้:", url);
-                    }
-                }
-
-                // ===== Yahoo Finance RSS =====
-                try {
-                    const yahooFeed = await parser.parseURL(
-                        `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${keyword}.BK&region=US&lang=en-US`
-                    );
-                    allItems = allItems.concat(yahooFeed.items);
-                } catch (err) {
-                    console.log("Yahoo feed error");
-                }
-
-                // ===== GNews API (ฟรี) =====
-                if (GNEWS_API_KEY) {
-                    try {
-                        const gnews = await axios.get(
-                            `https://gnews.io/api/v4/search?q=${keyword}&lang=th&max=5&token=${GNEWS_API_KEY}`
-                        );
-
-                        const articles = gnews.data.articles.map(article => ({
-                            title: article.title,
-                            link: article.url,
-                            contentSnippet: article.description || ""
-                        }));
-
-                        allItems = allItems.concat(articles);
-
-                    } catch (err) {
-                        console.log("GNews error");
-                    }
-                }
-
-                // ===== Filter =====
-                const filtered = allItems.filter(item => {
-                    const text = (
-                        (item.title || "") +
-                        (item.contentSnippet || "")
-                    ).toUpperCase();
-
-                    return text.includes(keyword);
-                });
-
-                // ===== ตัดข่าวซ้ำ (ตาม link) =====
-                const unique = [];
-                const seen = new Set();
-
-                for (const item of filtered) {
-                    if (!seen.has(item.link)) {
-                        seen.add(item.link);
-                        unique.push(item);
-                    }
-                }
-
-                // ===== ราคาหุ้นไทย =====
-                let priceText = "";
-
-                if (/^[A-Z]{2,6}$/.test(keyword)) {
-                    try {
-                        // Twelve Data API สำหรับหุ้นไทย
-                        const priceRes = await axios.get(
-                            `https://api.twelvedata.com/quote`,
-                            {
-                                params: {
-                                    symbol: keyword,
-                                    exchange: 'SET',  // Stock Exchange of Thailand
-                                    apikey: Twelve_Data_API
-                                },
-                                timeout: 8000
-                            }
-                        );
-
-                        if (priceRes.data && priceRes.data.close) {
-                            const data = priceRes.data;
-                            const currentPrice = parseFloat(data.close);
-                            const change = parseFloat(data.change || 0);
-                            const changePercent = parseFloat(data.percent_change || 0);
-
-                            const changeSymbol = change >= 0 ? '📈' : '📉';
-                            const changeColor = change >= 0 ? '🟢' : '🔴';
-
-                            priceText =
-                                `${changeSymbol} หุ้น ${keyword} ${changeColor}\n` +
-                                `━━━━━━━━━━━━━━━━━━\n` +
-                                `💰 ราคาปัจจุบัน: ${currentPrice.toFixed(2)} บาท\n` +
-                                `📊 เปลี่ยนแปลง: ${change.toFixed(2)} (${changePercent.toFixed(2)}%)\n`;
-
-                            if (data.high && data.low) {
-                                priceText += `📌 สูง-ต่ำ: ${parseFloat(data.high).toFixed(2)} - ${parseFloat(data.low).toFixed(2)}\n`;
-                            }
-                            if (data.volume) {
-                                priceText += `📦 ปริมาณ: ${parseInt(data.volume).toLocaleString()}\n`;
-                            }
-
-                            priceText += `━━━━━━━━━━━━━━━━━━\n\n`;
-                        }
-                    } catch (err) {
-                        console.log('ไม่สามารถดึงราคาหุ้น:', err.message);
-                        if (err.response?.data) {
-                            console.log('Twelve Data error:', err.response.data);
-                        }
-                    }
-                }
-
-
-                // ===== แสดงผล =====
-                if (unique.length === 0) {
-                    replyText = priceText + `ไม่พบข่าวของ ${keyword}`;
-                } else {
-                    replyText = priceText + ` ข่าวเกี่ยวกับ ${keyword}\n\n`;
-
-                    unique.slice(0, 5).forEach((item, index) => {
-                        replyText += `${index + 1}. ${item.title}\n🔗 ${item.link}\n\n`;
-                    });
-                }
-            }
-
-            return client.replyMessage(event.replyToken, {
-                type: 'text',
-                text: replyText
-            });
-
-        }));
-
+        await Promise.all(events.map(handleEvent));
         res.sendStatus(200);
-
     } catch (error) {
-        console.error(error);
+        console.error('Webhook error:', error);
         res.sendStatus(500);
     }
 });
 
+// ===== Event Router =====
+async function handleEvent(event) {
+    if (event.type === 'message' && event.message.type === 'text') {
+        return handleTextMessage(event);
+    }
+    if (event.type === 'postback') {
+        return handlePostback(event);
+    }
+    return null;
+}
+
+// ===== Text Message Handler =====
+async function handleTextMessage(event) {
+    const keyword = event.message.text.trim().toUpperCase();
+
+    try {
+        // ===== ทองคำ =====
+        if (keyword === 'GOLD' || keyword === 'ทอง' || keyword === 'XAUUSD' || keyword === 'XAU') {
+            const [goldData, prices] = await Promise.all([
+                fetchGoldQuote(),
+                fetchTimeSeries('XAU/USD', { outputsize: 30 }).catch(() => null)
+            ]);
+
+            const chartUrl = prices ? generatePriceChartUrl('XAU/USD', prices, 'Gold') : null;
+            const flexMessage = buildStockCard(goldData, chartUrl);
+
+            return client.replyMessage(event.replyToken, flexMessage);
+        }
+
+        // ===== หุ้นไทย =====
+        if (/^[A-Z]{1,10}$/.test(keyword)) {
+            const [stockData, prices] = await Promise.all([
+                fetchStockQuote(keyword),
+                fetchTimeSeries(keyword, { outputsize: 30, exchange: 'SET' }).catch(() => null)
+            ]);
+
+            const chartUrl = prices ? generatePriceChartUrl(keyword, prices, stockData.name) : null;
+            const flexMessage = buildStockCard(stockData, chartUrl);
+
+            return client.replyMessage(event.replyToken, flexMessage);
+        }
+
+        // ข้อความที่ไม่ตรงเงื่อนไข
+        return client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: '💡 พิมพ์ชื่อหุ้นไทย (เช่น PTT, AOT, ADVANC) หรือพิมพ์ "ทอง" เพื่อดูราคาทองคำ'
+        });
+
+    } catch (err) {
+        console.error('Text handler error:', err.message);
+
+        // ถ้าหาหุ้นไม่เจอ ลองค้นข่าว
+        try {
+            const news = await fetchNews(keyword);
+            if (news.length > 0) {
+                return client.replyMessage(event.replyToken, buildNewsMessage(keyword, news));
+            }
+        } catch (e) { /* ignore */ }
+
+        return client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: `❌ ไม่พบข้อมูลหุ้น "${keyword}"\n\n💡 ลองพิมพ์ชื่อหุ้นไทย เช่น PTT, AOT, ADVANC\nหรือพิมพ์ "ทอง" เพื่อดูราคาทองคำ`
+        });
+    }
+}
+
+// ===== Postback Handler =====
+async function handlePostback(event) {
+    const data = parsePostbackData(event.postback.data);
+    const { action, symbol, type } = data;
+
+    try {
+        switch (action) {
+            case 'detail_menu':
+                return client.replyMessage(event.replyToken, buildDetailMenu(symbol, type));
+
+            case 'overview':
+                return handleOverview(event, symbol, type);
+
+            case 'sr':
+                return handleSupportResistance(event, symbol, type);
+
+            case 'technical':
+                return handleTechnicalIndicators(event, symbol, type);
+
+            case 'news':
+                return handleNews(event, symbol, type);
+
+            case 'dividend':
+                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'เงินปันผล'));
+
+            case 'income':
+                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'งบกำไรขาดทุน'));
+
+            case 'balance':
+                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'งบดุล'));
+
+            case 'cashflow':
+                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'กระแสเงินสด'));
+
+            case 'revenue':
+                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'การแบ่งส่วนรายได้'));
+
+            case 'alert':
+                return client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: `🔔 ระบบแจ้งเตือนข่าว ${symbol} กำลังพัฒนา\nจะเปิดให้บริการเร็วๆ นี้`
+                });
+
+            default:
+                return client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: '❌ ไม่พบคำสั่งที่ต้องการ'
+                });
+        }
+    } catch (err) {
+        console.error(`Postback error (${action}):`, err.message);
+        return client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: `❌ เกิดข้อผิดพลาดในการดึงข้อมูล ${symbol}\nกรุณาลองใหม่อีกครั้ง`
+        });
+    }
+}
+
+// ===== Postback Action Handlers =====
+
+async function handleOverview(event, symbol, type) {
+    const isGold = type === 'gold';
+    const data = isGold ? await fetchGoldQuote() : await fetchStockQuote(symbol);
+    return client.replyMessage(event.replyToken, buildOverview(data));
+}
+
+async function handleSupportResistance(event, symbol, type) {
+    const isGold = type === 'gold';
+    const options = isGold ? { outputsize: 60 } : { outputsize: 60, exchange: 'SET' };
+    const prices = await fetchTimeSeries(isGold ? 'XAU/USD' : symbol, options);
+    const srData = calculateSupportResistance(prices);
+    const currentPrice = prices[prices.length - 1]?.close;
+    const chartUrl = generateSRChartUrl(symbol, prices, srData.supports, srData.resistances);
+    return client.replyMessage(event.replyToken, buildSupportResistance(symbol, srData, chartUrl, currentPrice));
+}
+
+async function handleTechnicalIndicators(event, symbol, type) {
+    const isGold = type === 'gold';
+    const exchange = isGold ? null : 'SET';
+    const actualSymbol = isGold ? 'XAU/USD' : symbol;
+    const indicators = await fetchTechnicalIndicators(actualSymbol, exchange);
+    return client.replyMessage(event.replyToken, buildTechnicalIndicators(symbol, indicators));
+}
+
+async function handleNews(event, symbol, type) {
+    const isGold = type === 'gold';
+    const news = await fetchNews(symbol, isGold ? 'gold' : 'stock');
+    return client.replyMessage(event.replyToken, buildNewsMessage(symbol, news));
+}
+
+// ===== Utils =====
+
+function parsePostbackData(dataStr) {
+    const params = {};
+    dataStr.split('&').forEach(pair => {
+        const [key, value] = pair.split('=');
+        params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+    });
+    return params;
+}
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-    console.log(`Server running at port ${port}`);
+    console.log(`🚀 Stock Bot running at port ${port}`);
 });
