@@ -251,27 +251,29 @@ async function fetchNews(keyword, type = 'stock') {
             })));
         } catch (e) { console.log('Gold RSS error:', e.message); }
     } else {
-        // ข่าวหุ้นไทย
-        const feeds = [
-            { url: 'https://www.kaohoon.com/feed', name: 'Kaohoon' },
-            { url: 'https://www.bangkokbiznews.com/rss', name: 'กรุงเทพธุรกิจ' },
-            { url: 'https://www.thansettakij.com/rss', name: 'ฐานเศรษฐกิจ' },
-            { url: 'https://www.prachachat.net/feed', name: 'ประชาชาติ' }
-        ];
+        // ===== ข่าวเฉพาะหุ้น =====
 
-        for (const f of feeds) {
+        // 1. GNews - ค้นหาด้วยชื่อหุ้นโดยตรง (เฉพาะเจาะจงที่สุด)
+        if (GNEWS_API_KEY) {
             try {
-                const feed = await parser.parseURL(f.url);
-                allItems = allItems.concat(feed.items.map(item => ({
-                    title: item.title,
-                    link: item.link,
-                    source: f.name,
-                    pubDate: item.pubDate
-                })));
-            } catch (e) { console.log(`RSS error (${f.name}):`, e.message); }
+                const searchQuery = `"${keyword}" หุ้น OR "${keyword}" stock`;
+                const gnews = await axios.get('https://gnews.io/api/v4/search', {
+                    params: { q: searchQuery, lang: 'th', max: 8, token: GNEWS_API_KEY },
+                    timeout: 8000
+                });
+                if (gnews.data?.articles) {
+                    allItems = allItems.concat(gnews.data.articles.map(a => ({
+                        title: a.title,
+                        link: a.url,
+                        source: a.source?.name || 'GNews',
+                        pubDate: a.publishedAt
+                    })));
+                }
+                console.log(`[NEWS] GNews found ${gnews.data?.articles?.length || 0} articles for ${keyword}`);
+            } catch (e) { console.log('GNews error:', e.message); }
         }
 
-        // Yahoo Finance RSS
+        // 2. Yahoo Finance RSS - ข่าวเฉพาะหุ้น
         try {
             const yahooFeed = await parser.parseURL(
                 `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${keyword}.BK&region=US&lang=en-US`
@@ -282,35 +284,36 @@ async function fetchNews(keyword, type = 'stock') {
                 source: 'Yahoo Finance',
                 pubDate: item.pubDate
             })));
+            console.log(`[NEWS] Yahoo RSS found ${yahooFeed.items.length} articles for ${keyword}`);
         } catch (e) { console.log('Yahoo RSS error:', e.message); }
 
-        // GNews
-        if (GNEWS_API_KEY) {
-            try {
-                const gnews = await axios.get(
-                    `https://gnews.io/api/v4/search?q=${keyword}&lang=th&max=5&token=${GNEWS_API_KEY}`,
-                    { timeout: 8000 }
-                );
-                allItems = allItems.concat(gnews.data.articles.map(a => ({
-                    title: a.title,
-                    link: a.url,
-                    source: a.source?.name || 'GNews',
-                    pubDate: a.publishedAt
-                })));
-            } catch (e) { console.log('GNews error:', e.message); }
+        // 3. Fallback: ถ้ายังไม่มีข่าว ลองดึงจาก RSS ไทยแล้ว filter ด้วย keyword
+        if (allItems.length < 3) {
+            const feeds = [
+                { url: 'https://www.kaohoon.com/feed', name: 'Kaohoon' },
+                { url: 'https://www.bangkokbiznews.com/rss', name: 'กรุงเทพธุรกิจ' }
+            ];
+            for (const f of feeds) {
+                try {
+                    const feed = await parser.parseURL(f.url);
+                    const matched = feed.items.filter(item =>
+                        (item.title || '').toUpperCase().includes(keyword.toUpperCase())
+                    );
+                    allItems = allItems.concat(matched.map(item => ({
+                        title: item.title,
+                        link: item.link,
+                        source: f.name,
+                        pubDate: item.pubDate
+                    })));
+                } catch (e) { console.log(`RSS error (${f.name}):`, e.message); }
+            }
         }
     }
-
-    // Filter by keyword
-    const filtered = allItems.filter(item => {
-        const text = (item.title || '').toUpperCase();
-        return text.includes(keyword.toUpperCase());
-    });
 
     // Deduplicate by link
     const seen = new Set();
     const unique = [];
-    for (const item of filtered) {
+    for (const item of allItems) {
         if (!seen.has(item.link)) {
             seen.add(item.link);
             unique.push(item);
