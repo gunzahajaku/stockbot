@@ -440,10 +440,47 @@ async function fetchTimeSeriesYahoo(symbol, days = 30) {
     return prices;
 }
 
+// ===== Yahoo Finance Crumb Auth =====
+let yahooCrumb = null;
+let yahooCookie = null;
+
+async function getYahooCrumb() {
+    if (yahooCrumb && yahooCookie) return { crumb: yahooCrumb, cookie: yahooCookie };
+
+    console.log('[YAHOO] Getting crumb...');
+    // Step 1: Get cookie
+    const cookieRes = await axios.get('https://fc.yahoo.com/', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        timeout: 5000,
+        maxRedirects: 5,
+        validateStatus: () => true // accept any status
+    });
+
+    const setCookies = cookieRes.headers['set-cookie'];
+    if (setCookies) {
+        yahooCookie = setCookies.map(c => c.split(';')[0]).join('; ');
+    }
+
+    // Step 2: Get crumb
+    const crumbRes = await axios.get('https://query2.finance.yahoo.com/v1/test/getcrumb', {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Cookie': yahooCookie || ''
+        },
+        timeout: 5000
+    });
+
+    yahooCrumb = crumbRes.data;
+    console.log('[YAHOO] Crumb obtained OK');
+    return { crumb: yahooCrumb, cookie: yahooCookie };
+}
+
 // ===== Yahoo Finance - Financial Data (งบการเงิน/เงินปันผล) =====
 async function fetchFinancialData(symbol) {
     const yahooSymbol = `${symbol}.BK`;
     console.log(`[YAHOO] Fetching financial data for ${yahooSymbol}`);
+
+    const { crumb, cookie } = await getYahooCrumb();
 
     const modules = [
         'summaryDetail',
@@ -453,9 +490,12 @@ async function fetchFinancialData(symbol) {
         'cashflowStatementHistory'
     ].join(',');
 
-    const res = await axios.get(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${yahooSymbol}`, {
-        params: { modules },
-        headers: { 'User-Agent': 'Mozilla/5.0' },
+    const res = await axios.get(`https://query2.finance.yahoo.com/v10/finance/quoteSummary/${yahooSymbol}`, {
+        params: { modules, crumb },
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Cookie': cookie || ''
+        },
         timeout: 10000
     });
 

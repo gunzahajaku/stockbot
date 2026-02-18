@@ -294,14 +294,28 @@ async function handlePostback(event) {
 
 async function handleOverview(event, symbol, type) {
     const isGold = type === 'gold';
-    const data = isGold ? await fetchGoldQuote() : await fetchStockQuote(symbol);
+    let data;
+    if (isGold) {
+        data = await fetchGoldQuote();
+    } else {
+        try { data = await fetchStockQuote(symbol); }
+        catch { try { data = await fetchStockQuoteYahoo(symbol); } catch { data = null; } }
+    }
+    if (!data) {
+        return client.replyMessage(event.replyToken, { type: 'text', text: `❌ ไม่สามารถดึงข้อมูล ${symbol} ได้` });
+    }
     return client.replyMessage(event.replyToken, buildOverview(data));
 }
 
 async function handleSupportResistance(event, symbol, type) {
     const isGold = type === 'gold';
-    const options = isGold ? { outputsize: 60 } : { outputsize: 60, exchange: 'SET' };
-    const prices = await fetchTimeSeries(isGold ? 'XAU/USD' : symbol, options);
+    let prices;
+    if (isGold) {
+        prices = await fetchTimeSeries('XAU/USD', { outputsize: 60 });
+    } else {
+        try { prices = await fetchTimeSeries(symbol, { outputsize: 60, exchange: 'SET' }); }
+        catch { prices = await fetchTimeSeriesYahoo(symbol, 60); }
+    }
     const srData = calculateSupportResistance(prices);
     const currentPrice = prices[prices.length - 1]?.close;
     const chartUrl = await generateSRChartUrl(symbol, prices, srData.supports, srData.resistances);
