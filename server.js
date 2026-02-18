@@ -44,84 +44,149 @@ async function handleEvent(event) {
 
 // ===== Text Message Handler =====
 async function handleTextMessage(event) {
-    const keyword = event.message.text.trim().toUpperCase();
+    const rawText = event.message.text.trim();
+    const keyword = rawText.toUpperCase();
 
-    // ===== ทองคำ =====
-    if (keyword === 'GOLD' || keyword === 'ทอง' || keyword === 'XAUUSD' || keyword === 'XAU') {
+    try {
+        // ===== ทองคำ =====
+        if (keyword === 'GOLD' || rawText === 'ทอง' || rawText === 'ทองคำ' || keyword === 'XAUUSD' || keyword === 'XAU') {
+            return await handleGoldMessage(event);
+        }
+
+        // ===== หุ้นไทย =====
+        if (/^[A-Z]{1,10}$/.test(keyword)) {
+            return await handleStockMessage(event, keyword);
+        }
+
+        // ข้อความที่ไม่ตรงเงื่อนไข
+        return client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: '💡 พิมพ์ชื่อหุ้นไทย (เช่น PTT, AOT, ADVANC) หรือพิมพ์ "ทอง" เพื่อดูราคาทองคำ'
+        });
+
+    } catch (err) {
+        console.error('handleTextMessage fatal error:', err);
+        // ถ้า Flex Message ล้มเหลว ตอบด้วย text ธรรมดาแทน
         try {
-            const [goldData, prices] = await Promise.all([
-                fetchGoldQuote(),
-                fetchTimeSeries('XAU/USD', { outputsize: 30 }).catch(() => null)
-            ]);
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: `❌ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง\n\nError: ${err.message || 'Unknown error'}`
+            });
+        } catch (e) {
+            console.error('Even text reply failed:', e.message);
+        }
+    }
+}
 
-            const chartUrl = prices ? generatePriceChartUrl('XAU/USD', prices, 'Gold') : null;
-            return client.replyMessage(event.replyToken, buildStockCard(goldData, chartUrl));
+// ===== Gold Handler =====
+async function handleGoldMessage(event) {
+    let goldData = null;
+    let prices = null;
 
+    // ดึงราคาทอง
+    try {
+        goldData = await fetchGoldQuote();
+    } catch (err) {
+        console.log('Gold quote failed:', err.message);
+    }
+
+    // ดึง time series สำหรับกราฟ
+    try {
+        prices = await fetchTimeSeries('XAU/USD', { outputsize: 30 });
+    } catch (err) {
+        console.log('Gold time series failed:', err.message);
+    }
+
+    // ถ้าดึงราคาไม่ได้ ใช้ fallback
+    if (!goldData) {
+        goldData = {
+            symbol: 'XAU/USD', name: 'Gold (ทองคำ)', exchange: 'FOREX',
+            currency: 'USD', price: 0, change: 0, changePercent: 0,
+            high: null, low: null, open: null, volume: null,
+            high52: null, low52: null, pe: null, eps: null
+        };
+    }
+
+    const chartUrl = prices ? generatePriceChartUrl('XAU/USD', prices, 'Gold') : null;
+
+    // ลองส่ง Flex Message
+    try {
+        return await client.replyMessage(event.replyToken, buildStockCard(goldData, chartUrl));
+    } catch (flexErr) {
+        console.error('Gold Flex Message failed:', flexErr.message);
+        // Fallback เป็น text ธรรมดา
+        const changeIcon = goldData.change >= 0 ? '📈' : '📉';
+        const text = `${changeIcon} ราคาทองคำ (GOLD)\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `💰 ราคา: $${goldData.price.toFixed(2)} USD/oz\n` +
+            `📊 เปลี่ยนแปลง: $${goldData.change.toFixed(2)} (${goldData.changePercent.toFixed(2)}%)\n` +
+            (goldData.high ? `📌 สูง-ต่ำ: $${goldData.high.toFixed(2)} - $${goldData.low.toFixed(2)}\n` : '') +
+            `━━━━━━━━━━━━━━━━━━`;
+        return client.replyMessage(event.replyToken, { type: 'text', text });
+    }
+}
+
+// ===== Stock Handler =====
+async function handleStockMessage(event, keyword) {
+    let stockData = null;
+    let prices = null;
+
+    // ลอง 1: Twelve Data พร้อม exchange SET
+    try {
+        stockData = await fetchStockQuote(keyword);
+    } catch (err) {
+        console.log(`SET quote failed for ${keyword}:`, err.message);
+    }
+
+    // ลอง 2: Twelve Data โดยไม่ระบุ exchange
+    if (!stockData) {
+        try {
+            const { fetchStockQuoteNoExchange } = require('./dataFetchers');
+            stockData = await fetchStockQuoteNoExchange(keyword);
         } catch (err) {
-            console.error('Gold fetch error:', err.message);
-            // แม้ดึงราคาไม่ได้ ก็แสดง card พื้นฐาน + ปุ่มดูข้อมูลเชิงลึก
-            const fallbackData = {
-                symbol: 'XAU/USD', name: 'Gold (ทองคำ)', exchange: 'FOREX',
-                currency: 'USD', price: 0, change: 0, changePercent: 0,
-                high: null, low: null, volume: null, pe: null, eps: null
-            };
-            return client.replyMessage(event.replyToken, buildStockCard(fallbackData, null));
+            console.log(`General quote failed for ${keyword}:`, err.message);
         }
     }
 
-    // ===== หุ้นไทย =====
-    if (/^[A-Z]{1,10}$/.test(keyword)) {
-        let stockData = null;
-        let prices = null;
-
-        // ลอง 1: Twelve Data พร้อม exchange SET
+    // ดึง time series สำหรับกราฟ
+    try {
+        prices = await fetchTimeSeries(keyword, { outputsize: 30, exchange: 'SET' });
+    } catch (err) {
+        console.log(`Time series failed for ${keyword}:`, err.message);
         try {
-            stockData = await fetchStockQuote(keyword);
-        } catch (err) {
-            console.log(`SET quote failed for ${keyword}:`, err.message);
+            prices = await fetchTimeSeries(keyword, { outputsize: 30 });
+        } catch (e) {
+            console.log(`Time series (no exchange) failed for ${keyword}:`, e.message);
         }
-
-        // ลอง 2: Twelve Data โดยไม่ระบุ exchange (รองรับหุ้นทั่วไป)
-        if (!stockData) {
-            try {
-                const { fetchStockQuoteNoExchange } = require('./dataFetchers');
-                stockData = await fetchStockQuoteNoExchange(keyword);
-            } catch (err) {
-                console.log(`General quote failed for ${keyword}:`, err.message);
-            }
-        }
-
-        // ลองดึง time series สำหรับกราฟ
-        try {
-            prices = await fetchTimeSeries(keyword, { outputsize: 30, exchange: 'SET' });
-        } catch (err) {
-            console.log(`Time series failed for ${keyword}:`, err.message);
-            // ลองโดยไม่ระบุ exchange
-            try {
-                prices = await fetchTimeSeries(keyword, { outputsize: 30 });
-            } catch (e) {
-                console.log(`Time series (no exchange) failed for ${keyword}:`, e.message);
-            }
-        }
-
-        // ถ้าดึงราคาไม่ได้เลย ก็ยังแสดง card พื้นฐาน + ปุ่มดูข้อมูลเชิงลึก
-        if (!stockData) {
-            stockData = {
-                symbol: keyword, name: keyword, exchange: 'SET',
-                currency: 'THB', price: 0, change: 0, changePercent: 0,
-                high: null, low: null, volume: null, pe: null, eps: null
-            };
-        }
-
-        const chartUrl = prices ? generatePriceChartUrl(keyword, prices, stockData.name) : null;
-        return client.replyMessage(event.replyToken, buildStockCard(stockData, chartUrl));
     }
 
-    // ข้อความที่ไม่ตรงเงื่อนไข
-    return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '💡 พิมพ์ชื่อหุ้นไทย (เช่น PTT, AOT, ADVANC) หรือพิมพ์ "ทอง" เพื่อดูราคาทองคำ'
-    });
+    // ถ้าดึงราคาไม่ได้เลย ใช้ fallback
+    if (!stockData) {
+        stockData = {
+            symbol: keyword, name: keyword, exchange: 'SET',
+            currency: 'THB', price: 0, change: 0, changePercent: 0,
+            high: null, low: null, open: null, volume: null,
+            high52: null, low52: null, pe: null, eps: null
+        };
+    }
+
+    const chartUrl = prices ? generatePriceChartUrl(keyword, prices, stockData.name) : null;
+
+    // ลองส่ง Flex Message
+    try {
+        return await client.replyMessage(event.replyToken, buildStockCard(stockData, chartUrl));
+    } catch (flexErr) {
+        console.error('Stock Flex Message failed:', flexErr.message);
+        // Fallback เป็น text ธรรมดา
+        const changeIcon = stockData.change >= 0 ? '📈' : '📉';
+        const text = `${changeIcon} หุ้น ${keyword}\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `💰 ราคา: ฿${stockData.price.toFixed(2)}\n` +
+            `📊 เปลี่ยนแปลง: ${stockData.change.toFixed(2)} (${stockData.changePercent.toFixed(2)}%)\n` +
+            (stockData.volume ? `📦 Volume: ${stockData.volume.toLocaleString()}\n` : '') +
+            `━━━━━━━━━━━━━━━━━━`;
+        return client.replyMessage(event.replyToken, { type: 'text', text });
+    }
 }
 
 // ===== Postback Handler =====
