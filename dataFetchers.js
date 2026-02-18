@@ -73,7 +73,7 @@ async function fetchStockQuoteNoExchange(symbol) {
 async function fetchGoldQuote() {
     const res = await axios.get('https://api.twelvedata.com/quote', {
         params: { symbol: 'XAU/USD', apikey: Twelve_Data_API },
-        timeout: 8000
+        timeout: 5000
     });
     if (res.data && res.data.close) {
         const d = res.data;

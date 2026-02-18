@@ -80,25 +80,38 @@ async function handleTextMessage(event) {
 
 // ===== Gold Handler =====
 async function handleGoldMessage(event) {
+    console.log('[GOLD] Handler started');
+
     let goldData = null;
     let prices = null;
 
-    // ดึงราคาทอง
+    // ดึงทั้งราคาและ time series พร้อมกัน (parallel) + timeout สั้นลง
     try {
-        goldData = await fetchGoldQuote();
-    } catch (err) {
-        console.log('Gold quote failed:', err.message);
-    }
+        const results = await Promise.allSettled([
+            fetchGoldQuote(),
+            fetchTimeSeries('XAU/USD', { outputsize: 30 })
+        ]);
 
-    // ดึง time series สำหรับกราฟ
-    try {
-        prices = await fetchTimeSeries('XAU/USD', { outputsize: 30 });
+        if (results[0].status === 'fulfilled') {
+            goldData = results[0].value;
+            console.log('[GOLD] Quote fetched OK, price:', goldData.price);
+        } else {
+            console.log('[GOLD] Quote failed:', results[0].reason?.message);
+        }
+
+        if (results[1].status === 'fulfilled') {
+            prices = results[1].value;
+            console.log('[GOLD] Time series fetched OK, points:', prices.length);
+        } else {
+            console.log('[GOLD] Time series failed:', results[1].reason?.message);
+        }
     } catch (err) {
-        console.log('Gold time series failed:', err.message);
+        console.log('[GOLD] Promise.allSettled error:', err.message);
     }
 
     // ถ้าดึงราคาไม่ได้ ใช้ fallback
     if (!goldData) {
+        console.log('[GOLD] Using fallback data');
         goldData = {
             symbol: 'XAU/USD', name: 'Gold (ทองคำ)', exchange: 'FOREX',
             currency: 'USD', price: 0, change: 0, changePercent: 0,
@@ -108,21 +121,37 @@ async function handleGoldMessage(event) {
     }
 
     const chartUrl = prices ? generatePriceChartUrl('XAU/USD', prices, 'Gold') : null;
+    console.log('[GOLD] Chart URL:', chartUrl ? 'generated' : 'null');
 
-    // ลองส่ง Flex Message
+    // ลอง Flex Message ก่อน
     try {
-        return await client.replyMessage(event.replyToken, buildStockCard(goldData, chartUrl));
+        const flexMsg = buildStockCard(goldData, chartUrl);
+        console.log('[GOLD] Flex JSON built OK');
+        await client.replyMessage(event.replyToken, flexMsg);
+        console.log('[GOLD] Flex sent OK');
+        return;
     } catch (flexErr) {
-        console.error('Gold Flex Message failed:', flexErr.message);
-        // Fallback เป็น text ธรรมดา
+        console.error('[GOLD] Flex failed:', flexErr.message);
+        if (flexErr.originalError?.response?.data) {
+            console.error('[GOLD] LINE API error:', JSON.stringify(flexErr.originalError.response.data));
+        }
+    }
+
+    // Fallback: text ธรรมดา
+    try {
         const changeIcon = goldData.change >= 0 ? '📈' : '📉';
         const text = `${changeIcon} ราคาทองคำ (GOLD)\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
             `💰 ราคา: $${goldData.price.toFixed(2)} USD/oz\n` +
             `📊 เปลี่ยนแปลง: $${goldData.change.toFixed(2)} (${goldData.changePercent.toFixed(2)}%)\n` +
-            (goldData.high ? `📌 สูง-ต่ำ: $${goldData.high.toFixed(2)} - $${goldData.low.toFixed(2)}\n` : '') +
-            `━━━━━━━━━━━━━━━━━━`;
-        return client.replyMessage(event.replyToken, { type: 'text', text });
+            `━━━━━━━━━━━━━━━━━━\n\n` +
+            `พิมพ์ "GOLD" อีกครั้งเพื่อดูข้อมูลกราฟ`;
+        await client.replyMessage(event.replyToken, { type: 'text', text });
+        console.log('[GOLD] Text fallback sent OK');
+        return;
+    } catch (textErr) {
+        console.error('[GOLD] Text fallback also failed:', textErr.message);
+        // replyToken ถูกใช้ไปแล้ว ไม่สามารถส่งซ้ำได้
     }
 }
 
