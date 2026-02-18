@@ -39,6 +39,36 @@ async function fetchStockQuote(symbol) {
     throw new Error('No data from Twelve Data');
 }
 
+// ===== Stock Quote (ไม่ระบุ exchange - fallback) =====
+async function fetchStockQuoteNoExchange(symbol) {
+    const res = await axios.get('https://api.twelvedata.com/quote', {
+        params: { symbol, apikey: Twelve_Data_API },
+        timeout: 8000
+    });
+    if (res.data && res.data.close) {
+        const d = res.data;
+        return {
+            symbol: d.symbol || symbol,
+            name: d.name || symbol,
+            exchange: d.exchange || '',
+            currency: d.currency || 'THB',
+            price: parseFloat(d.close),
+            change: parseFloat(d.change || 0),
+            changePercent: parseFloat(d.percent_change || 0),
+            high: d.high ? parseFloat(d.high) : null,
+            low: d.low ? parseFloat(d.low) : null,
+            open: d.open ? parseFloat(d.open) : null,
+            volume: d.volume ? parseInt(d.volume) : null,
+            high52: d.fifty_two_week?.high ? parseFloat(d.fifty_two_week.high) : null,
+            low52: d.fifty_two_week?.low ? parseFloat(d.fifty_two_week.low) : null,
+            pe: d.pe_ratio ? parseFloat(d.pe_ratio) : null,
+            eps: d.eps ? parseFloat(d.eps) : null,
+            datetime: d.datetime || ''
+        };
+    }
+    throw new Error('No data from Twelve Data (no exchange)');
+}
+
 // ===== Gold Quote (XAU/USD) =====
 async function fetchGoldQuote() {
     const res = await axios.get('https://api.twelvedata.com/quote', {
@@ -304,6 +334,7 @@ async function fetchNews(keyword, type = 'stock') {
 
 module.exports = {
     fetchStockQuote,
+    fetchStockQuoteNoExchange,
     fetchGoldQuote,
     fetchTimeSeries,
     calculateSupportResistance,
