@@ -631,6 +631,128 @@ function buildTechRow(label, value, signal, signalColor) {
     return { type: 'box', layout: 'horizontal', contents, margin: 'md' };
 }
 
+/**
+ * สร้าง Flex Message เงินปันผล
+ */
+function buildDividend(symbol, dividend) {
+    const rows = [];
+
+    if (dividend.rate) rows.push(buildInfoRow('💰 เงินปันผล/หุ้น', `฿${dividend.rate.toFixed(2)}`, '#00C853', true));
+    if (dividend.yield) rows.push(buildInfoRow('📊 Dividend Yield', `${dividend.yield}%`, '#FFFFFF'));
+    if (dividend.payoutRatio) rows.push(buildInfoRow('📋 Payout Ratio', `${dividend.payoutRatio}%`, '#CCCCCC'));
+    if (dividend.exDate) rows.push(buildInfoRow('📅 Ex-Dividend Date', dividend.exDate, '#CCCCCC'));
+    if (dividend.fiveYearAvg) rows.push(buildInfoRow('📈 เฉลี่ย 5 ปี', `${dividend.fiveYearAvg}%`, '#CCCCCC'));
+
+    if (rows.length === 0) {
+        rows.push({ type: 'text', text: 'ไม่พบข้อมูลเงินปันผลสำหรับหุ้นนี้', color: '#888888', size: 'sm', wrap: true });
+    }
+
+    return buildFinancialFlex(`💰 เงินปันผล: ${symbol}`, rows);
+}
+
+/**
+ * สร้าง Flex Message งบกำไรขาดทุน
+ */
+function buildIncomeStatement(symbol, statements) {
+    const rows = [];
+
+    statements.forEach((stmt, idx) => {
+        if (idx > 0) rows.push({ type: 'separator', margin: 'lg', color: '#333333' });
+        rows.push({
+            type: 'text', text: `📅 งวด: ${stmt.period}`,
+            weight: 'bold', size: 'sm', color: '#00C853', margin: 'lg'
+        });
+        if (stmt.revenue) rows.push(buildInfoRow('รายได้รวม', stmt.revenue, '#FFFFFF'));
+        if (stmt.grossProfit) rows.push(buildInfoRow('กำไรขั้นต้น', stmt.grossProfit, '#CCCCCC'));
+        if (stmt.operatingIncome) rows.push(buildInfoRow('กำไรจากการดำเนินงาน', stmt.operatingIncome, '#CCCCCC'));
+        if (stmt.ebit) rows.push(buildInfoRow('EBIT', stmt.ebit, '#CCCCCC'));
+        if (stmt.netIncome) rows.push(buildInfoRow('กำไรสุทธิ', stmt.netIncome, '#00C853', true));
+    });
+
+    return buildFinancialFlex(`📋 งบกำไรขาดทุน: ${symbol}`, rows);
+}
+
+/**
+ * สร้าง Flex Message งบดุล
+ */
+function buildBalanceSheet(symbol, statements) {
+    const rows = [];
+
+    statements.forEach((stmt, idx) => {
+        if (idx > 0) rows.push({ type: 'separator', margin: 'lg', color: '#333333' });
+        rows.push({
+            type: 'text', text: `📅 งวด: ${stmt.period}`,
+            weight: 'bold', size: 'sm', color: '#00C853', margin: 'lg'
+        });
+        if (stmt.totalAssets) rows.push(buildInfoRow('สินทรัพย์รวม', stmt.totalAssets, '#FFFFFF', true));
+        if (stmt.totalLiabilities) rows.push(buildInfoRow('หนี้สินรวม', stmt.totalLiabilities, '#FF8A80'));
+        if (stmt.totalEquity) rows.push(buildInfoRow('ส่วนของผู้ถือหุ้น', stmt.totalEquity, '#00C853'));
+        if (stmt.cash) rows.push(buildInfoRow('เงินสด', stmt.cash, '#CCCCCC'));
+        if (stmt.totalDebt) rows.push(buildInfoRow('หนี้ระยะยาว', stmt.totalDebt, '#CCCCCC'));
+    });
+
+    return buildFinancialFlex(`📊 งบดุล: ${symbol}`, rows);
+}
+
+/**
+ * สร้าง Flex Message กระแสเงินสด
+ */
+function buildCashFlow(symbol, statements) {
+    const rows = [];
+
+    statements.forEach((stmt, idx) => {
+        if (idx > 0) rows.push({ type: 'separator', margin: 'lg', color: '#333333' });
+        rows.push({
+            type: 'text', text: `📅 งวด: ${stmt.period}`,
+            weight: 'bold', size: 'sm', color: '#00C853', margin: 'lg'
+        });
+        if (stmt.operatingCF) rows.push(buildInfoRow('CF จากการดำเนินงาน', stmt.operatingCF, '#FFFFFF'));
+        if (stmt.investingCF) rows.push(buildInfoRow('CF จากการลงทุน', stmt.investingCF, '#CCCCCC'));
+        if (stmt.financingCF) rows.push(buildInfoRow('CF จากการจัดหาเงิน', stmt.financingCF, '#CCCCCC'));
+        if (stmt.capEx) rows.push(buildInfoRow('รายจ่ายฝ่ายทุน', stmt.capEx, '#FF8A80'));
+        if (stmt.freeCashFlow) rows.push(buildInfoRow('Free Cash Flow', stmt.freeCashFlow, '#00C853', true));
+    });
+
+    return buildFinancialFlex(`💧 กระแสเงินสด: ${symbol}`, rows);
+}
+
+/**
+ * Helper: สร้าง Flex bubble สำหรับข้อมูลงบการเงิน
+ */
+function buildFinancialFlex(title, rows) {
+    return {
+        type: 'flex',
+        altText: title,
+        contents: {
+            type: 'bubble',
+            size: 'giga',
+            body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                    {
+                        type: 'text',
+                        text: title,
+                        weight: 'bold',
+                        size: 'md',
+                        color: '#FFFFFF',
+                        wrap: true
+                    },
+                    { type: 'separator', margin: 'lg', color: '#333333' },
+                    {
+                        type: 'box',
+                        layout: 'vertical',
+                        contents: rows,
+                        margin: 'md'
+                    }
+                ],
+                paddingAll: '20px',
+                backgroundColor: '#1a1a2e'
+            }
+        }
+    };
+}
+
 module.exports = {
     buildStockCard,
     buildDetailMenu,
@@ -638,5 +760,9 @@ module.exports = {
     buildTechnicalIndicators,
     buildNewsMessage,
     buildComingSoon,
-    buildOverview
+    buildOverview,
+    buildDividend,
+    buildIncomeStatement,
+    buildBalanceSheet,
+    buildCashFlow
 };

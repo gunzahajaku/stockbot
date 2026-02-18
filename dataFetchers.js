@@ -440,6 +440,88 @@ async function fetchTimeSeriesYahoo(symbol, days = 30) {
     return prices;
 }
 
+// ===== Yahoo Finance - Financial Data (งบการเงิน/เงินปันผล) =====
+async function fetchFinancialData(symbol) {
+    const yahooSymbol = `${symbol}.BK`;
+    console.log(`[YAHOO] Fetching financial data for ${yahooSymbol}`);
+
+    const modules = [
+        'summaryDetail',
+        'defaultKeyStatistics',
+        'incomeStatementHistory',
+        'balanceSheetHistory',
+        'cashflowStatementHistory'
+    ].join(',');
+
+    const res = await axios.get(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${yahooSymbol}`, {
+        params: { modules },
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 10000
+    });
+
+    const result = res.data?.quoteSummary?.result?.[0];
+    if (!result) throw new Error(`No financial data for ${yahooSymbol}`);
+
+    // ===== เงินปันผล =====
+    const sd = result.summaryDetail || {};
+    const ks = result.defaultKeyStatistics || {};
+    const dividend = {
+        rate: sd.dividendRate?.raw || null,
+        yield: sd.dividendYield?.raw ? (sd.dividendYield.raw * 100).toFixed(2) : null,
+        exDate: ks.lastDividendDate?.fmt || sd.exDividendDate?.fmt || null,
+        payoutRatio: sd.payoutRatio?.raw ? (sd.payoutRatio.raw * 100).toFixed(1) : null,
+        fiveYearAvg: ks.fiveYearAvgDividendYield?.raw ? ks.fiveYearAvgDividendYield.raw.toFixed(2) : null
+    };
+
+    // ===== Helper: format ตัวเลขเป็นล้าน/พันล้าน =====
+    const fmtNum = (val) => {
+        if (!val && val !== 0) return null;
+        const n = typeof val === 'object' ? val.raw : val;
+        if (!n && n !== 0) return null;
+        if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + ' B';
+        if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + ' M';
+        if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(2) + ' K';
+        return n.toFixed(2);
+    };
+
+    // ===== งบกำไรขาดทุน (Income Statement) =====
+    const isHistory = result.incomeStatementHistory?.incomeStatementHistory || [];
+    const incomeStatement = isHistory.length > 0 ? isHistory.slice(0, 2).map(stmt => ({
+        period: stmt.endDate?.fmt || 'N/A',
+        revenue: fmtNum(stmt.totalRevenue),
+        grossProfit: fmtNum(stmt.grossProfit),
+        operatingIncome: fmtNum(stmt.operatingIncome),
+        netIncome: fmtNum(stmt.netIncome),
+        ebit: fmtNum(stmt.ebit)
+    })) : null;
+
+    // ===== งบดุล (Balance Sheet) =====
+    const bsHistory = result.balanceSheetHistory?.balanceSheetStatements || [];
+    const balanceSheet = bsHistory.length > 0 ? bsHistory.slice(0, 2).map(stmt => ({
+        period: stmt.endDate?.fmt || 'N/A',
+        totalAssets: fmtNum(stmt.totalAssets),
+        totalLiabilities: fmtNum(stmt.totalLiab),
+        totalEquity: fmtNum(stmt.totalStockholderEquity),
+        cash: fmtNum(stmt.cash),
+        totalDebt: fmtNum(stmt.longTermDebt)
+    })) : null;
+
+    // ===== กระแสเงินสด (Cash Flow) =====
+    const cfHistory = result.cashflowStatementHistory?.cashflowStatements || [];
+    const cashFlow = cfHistory.length > 0 ? cfHistory.slice(0, 2).map(stmt => ({
+        period: stmt.endDate?.fmt || 'N/A',
+        operatingCF: fmtNum(stmt.totalCashFromOperatingActivities),
+        investingCF: fmtNum(stmt.totalCashflowsFinancing),
+        financingCF: fmtNum(stmt.totalCashFromFinancingActivities),
+        freeCashFlow: fmtNum(stmt.freeCashFlow),
+        capEx: fmtNum(stmt.capitalExpenditures)
+    })) : null;
+
+    console.log(`[YAHOO] Financial data OK for ${symbol}: dividend=${!!dividend.rate}, IS=${!!incomeStatement}, BS=${!!balanceSheet}, CF=${!!cashFlow}`);
+
+    return { dividend, incomeStatement, balanceSheet, cashFlow };
+}
+
 module.exports = {
     fetchStockQuote,
     fetchStockQuoteNoExchange,
@@ -449,5 +531,6 @@ module.exports = {
     fetchTimeSeriesYahoo,
     calculateSupportResistance,
     fetchTechnicalIndicators,
+    fetchFinancialData,
     fetchNews
 };

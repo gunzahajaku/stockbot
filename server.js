@@ -2,9 +2,9 @@ require('dotenv').config();
 
 const express = require('express');
 const line = require('@line/bot-sdk');
-const { fetchStockQuote, fetchStockQuoteNoExchange, fetchGoldQuote, fetchTimeSeries, fetchStockQuoteYahoo, fetchTimeSeriesYahoo, calculateSupportResistance, fetchTechnicalIndicators, fetchNews } = require('./dataFetchers');
+const { fetchStockQuote, fetchStockQuoteNoExchange, fetchGoldQuote, fetchTimeSeries, fetchStockQuoteYahoo, fetchTimeSeriesYahoo, calculateSupportResistance, fetchTechnicalIndicators, fetchFinancialData, fetchNews } = require('./dataFetchers');
 const { generatePriceChartUrl, generateSRChartUrl } = require('./chartGenerator');
-const { buildStockCard, buildDetailMenu, buildSupportResistance, buildTechnicalIndicators, buildNewsMessage, buildComingSoon, buildOverview } = require('./flexBuilders');
+const { buildStockCard, buildDetailMenu, buildSupportResistance, buildTechnicalIndicators, buildNewsMessage, buildComingSoon, buildOverview, buildDividend, buildIncomeStatement, buildBalanceSheet, buildCashFlow } = require('./flexBuilders');
 
 const app = express();
 
@@ -255,16 +255,16 @@ async function handlePostback(event) {
                 return handleNews(event, symbol, type);
 
             case 'dividend':
-                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'เงินปันผล'));
+                return handleDividend(event, symbol);
 
             case 'income':
-                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'งบกำไรขาดทุน'));
+                return handleIncomeStatement(event, symbol);
 
             case 'balance':
-                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'งบดุล'));
+                return handleBalanceSheet(event, symbol);
 
             case 'cashflow':
-                return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'กระแสเงินสด'));
+                return handleCashFlow(event, symbol);
 
             case 'revenue':
                 return client.replyMessage(event.replyToken, buildComingSoon(symbol, 'การแบ่งส่วนรายได้'));
@@ -320,6 +320,49 @@ async function handleNews(event, symbol, type) {
     const isGold = type === 'gold';
     const news = await fetchNews(symbol, isGold ? 'gold' : 'stock');
     return client.replyMessage(event.replyToken, buildNewsMessage(symbol, news));
+}
+
+async function handleDividend(event, symbol) {
+    try {
+        const fin = await fetchFinancialData(symbol);
+        return client.replyMessage(event.replyToken, buildDividend(symbol, fin.dividend));
+    } catch (err) {
+        console.error(`Dividend error for ${symbol}:`, err.message);
+        return client.replyMessage(event.replyToken, { type: 'text', text: `❌ ไม่พบข้อมูลเงินปันผลของ ${symbol}` });
+    }
+}
+
+async function handleIncomeStatement(event, symbol) {
+    try {
+        const fin = await fetchFinancialData(symbol);
+        if (!fin.incomeStatement) throw new Error('No income statement data');
+        return client.replyMessage(event.replyToken, buildIncomeStatement(symbol, fin.incomeStatement));
+    } catch (err) {
+        console.error(`Income statement error for ${symbol}:`, err.message);
+        return client.replyMessage(event.replyToken, { type: 'text', text: `❌ ไม่พบข้อมูลงบกำไรขาดทุนของ ${symbol}` });
+    }
+}
+
+async function handleBalanceSheet(event, symbol) {
+    try {
+        const fin = await fetchFinancialData(symbol);
+        if (!fin.balanceSheet) throw new Error('No balance sheet data');
+        return client.replyMessage(event.replyToken, buildBalanceSheet(symbol, fin.balanceSheet));
+    } catch (err) {
+        console.error(`Balance sheet error for ${symbol}:`, err.message);
+        return client.replyMessage(event.replyToken, { type: 'text', text: `❌ ไม่พบข้อมูลงบดุลของ ${symbol}` });
+    }
+}
+
+async function handleCashFlow(event, symbol) {
+    try {
+        const fin = await fetchFinancialData(symbol);
+        if (!fin.cashFlow) throw new Error('No cash flow data');
+        return client.replyMessage(event.replyToken, buildCashFlow(symbol, fin.cashFlow));
+    } catch (err) {
+        console.error(`Cash flow error for ${symbol}:`, err.message);
+        return client.replyMessage(event.replyToken, { type: 'text', text: `❌ ไม่พบข้อมูลกระแสเงินสดของ ${symbol}` });
+    }
 }
 
 // ===== Utils =====
