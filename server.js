@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const line = require('@line/bot-sdk');
-const { fetchStockQuote, fetchGoldQuote, fetchTimeSeries, calculateSupportResistance, fetchTechnicalIndicators, fetchNews } = require('./dataFetchers');
+const { fetchStockQuote, fetchStockQuoteNoExchange, fetchGoldQuote, fetchTimeSeries, fetchStockQuoteYahoo, fetchTimeSeriesYahoo, calculateSupportResistance, fetchTechnicalIndicators, fetchNews } = require('./dataFetchers');
 const { generatePriceChartUrl, generateSRChartUrl } = require('./chartGenerator');
 const { buildStockCard, buildDetailMenu, buildSupportResistance, buildTechnicalIndicators, buildNewsMessage, buildComingSoon, buildOverview } = require('./flexBuilders');
 
@@ -163,29 +163,43 @@ async function handleStockMessage(event, keyword) {
     // ลอง 1: Twelve Data พร้อม exchange SET
     try {
         stockData = await fetchStockQuote(keyword);
+        console.log(`[STOCK] Twelve Data SET OK: ${keyword}`);
     } catch (err) {
-        console.log(`SET quote failed for ${keyword}:`, err.message);
+        console.log(`[STOCK] Twelve Data SET failed: ${err.message}`);
     }
 
     // ลอง 2: Twelve Data โดยไม่ระบุ exchange
     if (!stockData) {
         try {
-            const { fetchStockQuoteNoExchange } = require('./dataFetchers');
             stockData = await fetchStockQuoteNoExchange(keyword);
+            console.log(`[STOCK] Twelve Data (no exchange) OK: ${keyword}`);
         } catch (err) {
-            console.log(`General quote failed for ${keyword}:`, err.message);
+            console.log(`[STOCK] Twelve Data (no exchange) failed: ${err.message}`);
+        }
+    }
+
+    // ลอง 3: Yahoo Finance (.BK) สำหรับหุ้นไทย
+    if (!stockData) {
+        try {
+            stockData = await fetchStockQuoteYahoo(keyword);
+            console.log(`[STOCK] Yahoo Finance OK: ${keyword}, price: ${stockData.price}`);
+        } catch (err) {
+            console.log(`[STOCK] Yahoo Finance failed: ${err.message}`);
         }
     }
 
     // ดึง time series สำหรับกราฟ
+    // ลอง Twelve Data ก่อน → Yahoo Finance
     try {
         prices = await fetchTimeSeries(keyword, { outputsize: 30, exchange: 'SET' });
+        console.log(`[STOCK] Time series (Twelve Data SET) OK: ${prices.length} points`);
     } catch (err) {
-        console.log(`Time series failed for ${keyword}:`, err.message);
+        console.log(`[STOCK] Time series (Twelve Data SET) failed: ${err.message}`);
         try {
-            prices = await fetchTimeSeries(keyword, { outputsize: 30 });
+            prices = await fetchTimeSeriesYahoo(keyword, 30);
+            console.log(`[STOCK] Time series (Yahoo) OK: ${prices.length} points`);
         } catch (e) {
-            console.log(`Time series (no exchange) failed for ${keyword}:`, e.message);
+            console.log(`[STOCK] Time series (Yahoo) failed: ${e.message}`);
         }
     }
 

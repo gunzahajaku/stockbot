@@ -332,11 +332,121 @@ async function fetchNews(keyword, type = 'stock') {
     });
 }
 
+// ===== Yahoo Finance - Stock Quote (Thai SET + .BK) =====
+async function fetchStockQuoteYahoo(symbol) {
+    const yahooSymbol = `${symbol}.BK`;
+    console.log(`[YAHOO] Fetching quote for ${yahooSymbol}`);
+
+    const res = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}`, {
+        params: {
+            interval: '1d',
+            range: '5d'
+        },
+        headers: {
+            'User-Agent': 'Mozilla/5.0'
+        },
+        timeout: 8000
+    });
+
+    const result = res.data?.chart?.result?.[0];
+    if (!result || !result.meta) {
+        throw new Error(`No Yahoo data for ${yahooSymbol}`);
+    }
+
+    const meta = result.meta;
+    const quote = result.indicators?.quote?.[0];
+    const timestamps = result.timestamp || [];
+
+    // ดึงราคาปัจจุบัน
+    const currentPrice = meta.regularMarketPrice || 0;
+    const previousClose = meta.chartPreviousClose || meta.previousClose || currentPrice;
+    const change = currentPrice - previousClose;
+    const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0;
+
+    // ดึง high/low จากวันล่าสุด
+    let dayHigh = null, dayLow = null, dayVolume = null;
+    if (quote && timestamps.length > 0) {
+        const lastIdx = timestamps.length - 1;
+        dayHigh = quote.high?.[lastIdx] || null;
+        dayLow = quote.low?.[lastIdx] || null;
+        dayVolume = quote.volume?.[lastIdx] || null;
+    }
+
+    console.log(`[YAHOO] ${symbol} price: ${currentPrice}`);
+
+    return {
+        symbol: symbol,
+        name: meta.shortName || meta.symbol || symbol,
+        exchange: 'SET',
+        currency: meta.currency || 'THB',
+        price: currentPrice,
+        change: parseFloat(change.toFixed(2)),
+        changePercent: parseFloat(changePercent.toFixed(2)),
+        high: dayHigh,
+        low: dayLow,
+        open: quote?.open?.[timestamps.length - 1] || null,
+        volume: dayVolume ? parseInt(dayVolume) : null,
+        high52: meta.fiftyTwoWeekHigh || null,
+        low52: meta.fiftyTwoWeekLow || null,
+        pe: null,
+        eps: null,
+        datetime: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })
+    };
+}
+
+// ===== Yahoo Finance - Time Series (Thai SET + .BK) =====
+async function fetchTimeSeriesYahoo(symbol, days = 30) {
+    const yahooSymbol = `${symbol}.BK`;
+    console.log(`[YAHOO] Fetching time series for ${yahooSymbol}, ${days} days`);
+
+    const res = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}`, {
+        params: {
+            interval: '1d',
+            range: `${Math.min(days, 90)}d`
+        },
+        headers: {
+            'User-Agent': 'Mozilla/5.0'
+        },
+        timeout: 8000
+    });
+
+    const result = res.data?.chart?.result?.[0];
+    if (!result || !result.timestamp) {
+        throw new Error(`No Yahoo time series for ${yahooSymbol}`);
+    }
+
+    const timestamps = result.timestamp;
+    const quote = result.indicators?.quote?.[0];
+    if (!quote) throw new Error('No quote data in Yahoo response');
+
+    const prices = [];
+    for (let i = 0; i < timestamps.length; i++) {
+        const close = quote.close?.[i];
+        if (close !== null && close !== undefined) {
+            const date = new Date(timestamps[i] * 1000);
+            prices.push({
+                date: date.toISOString().split('T')[0],
+                open: quote.open?.[i] || close,
+                high: quote.high?.[i] || close,
+                low: quote.low?.[i] || close,
+                close: close,
+                volume: quote.volume?.[i] || 0
+            });
+        }
+    }
+
+    if (prices.length === 0) throw new Error('No valid price data from Yahoo');
+    console.log(`[YAHOO] Got ${prices.length} data points for ${symbol}`);
+    return prices;
+}
+
 module.exports = {
     fetchStockQuote,
     fetchStockQuoteNoExchange,
+    fetchStockQuoteYahoo,
     fetchGoldQuote,
     fetchTimeSeries,
+    fetchTimeSeriesYahoo,
     calculateSupportResistance,
     fetchTechnicalIndicators,
     fetchNews
